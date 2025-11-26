@@ -593,7 +593,7 @@ router.get("/:formId/chat", async (req, res) => {
 //enviar mensaje
 router.post("/chat", async (req, res) => {
   try {
-    const { formId, autor, mensaje } = req.body;
+    const { formId, autor, mensaje, admin } = req.body;
 
     if (!autor || !mensaje || !formId) {
       return res.status(400).json({ error: "Faltan campos: formId, autor o mensaje" });
@@ -604,6 +604,7 @@ router.post("/chat", async (req, res) => {
       mensaje,
       leido: false,
       fecha: new Date(),
+      admin: admin || false
     };
 
     let query;
@@ -1041,7 +1042,7 @@ router.get("/data-approved/:responseId", async (req, res) => {
 
 router.get("/download-approved-pdf/:responseId", async (req, res) => {
   try {
-    console.log("🔍 DEBUG - Solicitando descarga de PDF aprobado para responseId:", req.params.responseId);
+    console.log("Debug: Solicitando descarga de PDF aprobado para responseId:", req.params.responseId);
 
     const approvedDoc = await req.db.collection("aprobados").findOne({
       responseId: req.params.responseId
@@ -1057,18 +1058,11 @@ router.get("/download-approved-pdf/:responseId", async (req, res) => {
       return res.status(404).json({ error: "Archivo PDF no disponible" });
     }
 
-    console.log("🔍 DEBUG - Nombre real del archivo en BD:", approvedDoc.correctedFile.fileName);
+    console.log("Debug: Enviando PDF:", approvedDoc.correctedFile.fileName);
 
-    // 🔧 HEADERS CORS CRÍTICOS
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-
-    // Headers normales
     res.setHeader('Content-Type', approvedDoc.correctedFile.mimeType || 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${approvedDoc.correctedFile.fileName}"`);
     res.setHeader('Content-Length', approvedDoc.correctedFile.fileSize);
-
-    console.log("🔍 DEBUG - Headers configurados, enviando archivo...");
 
     res.send(approvedDoc.correctedFile.fileData.buffer || approvedDoc.correctedFile.fileData);
 
