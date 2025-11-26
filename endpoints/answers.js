@@ -429,7 +429,7 @@ router.get("/mini", async (req, res) => {
       })
       .toArray();
 
-    // CORRECCIÓN: Procesar las respuestas en JavaScript
+    // Procesar las respuestas en JavaScript
     const answersProcessed = answers.map(answer => {
       // Buscar el nombre del trabajador en diferentes formatos
       let trabajador = "No especificado";
