@@ -549,16 +549,43 @@ router.put("/public/:id", async (req, res) => {
 //eliminar respuesta
 router.delete("/:id", async (req, res) => {
   try {
-    const result = await req.db
-      .collection("respuestas")
-      .deleteOne({ _id: new ObjectId(req.params.id) });
+    const responseId = req.params.id;
 
-    if (!result) {
+    // Eliminar de todas las colecciones relacionadas
+    const [resultRespuestas, resultDocxs, resultAprobados, resultFirmados, resultAdjuntos] = await Promise.all([
+      // Eliminar de respuestas
+      req.db.collection("respuestas").deleteOne({ _id: new ObjectId(responseId) }),
+
+      // Eliminar de docxs (si existe)
+      req.db.collection("docxs").deleteOne({ responseId: responseId }),
+
+      // Eliminar de aprobados (si existe)
+      req.db.collection("aprobados").deleteOne({ responseId: responseId }),
+
+      // Eliminar de firmados (si existe)
+      req.db.collection("firmados").deleteOne({ responseId: responseId }),
+
+      // Eliminar adjuntos (si existen)
+      req.db.collection("adjuntos").deleteOne({ responseId: new ObjectId(responseId) })
+    ]);
+
+    // Verificar si al menos se eliminó la respuesta principal
+    if (resultRespuestas.deletedCount === 0) {
       return res.status(404).json({ error: "Respuesta no encontrada" });
     }
 
-    res.status(200).json({ message: "Formulario eliminado" });
+    res.status(200).json({
+      message: "Formulario y todos los datos relacionados eliminados",
+      deleted: {
+        respuestas: resultRespuestas.deletedCount,
+        docxs: resultDocxs.deletedCount,
+        aprobados: resultAprobados.deletedCount,
+        firmados: resultFirmados.deletedCount,
+        adjuntos: resultAdjuntos.deletedCount
+      }
+    });
   } catch (err) {
+    console.error("Error eliminando respuesta y datos relacionados:", err);
     res.status(500).json({ error: "Error al eliminar formulario" });
   }
 });
