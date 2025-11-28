@@ -304,6 +304,73 @@ router.post("/register", async (req, res) => {
   }
 });
 
+// POST - Cambiar contraseña (Requiere validación de contraseña anterior)
+router.post("/change-password", async (req, res) => {
+  const { email, currentPassword, newPassword } = req.body;
+
+  if (!email || !currentPassword || !newPassword) {
+    return res.status(400).json({ success: false, message: "Faltan datos requeridos" });
+  }
+
+  try {
+    // 1. Buscar usuario por email
+    const user = await req.db.collection("usuarios").findOne({ mail: email });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "Usuario no encontrado" });
+    }
+
+    // 2. Verificar contraseña actual (Pseudo-login)
+    if (user.pass !== currentPassword) {
+      return res.status(401).json({ success: false, message: "La contraseña actual es incorrecta" });
+    }
+
+    // 3. Validaciones de seguridad de la nueva contraseña
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: "La nueva contraseña debe tener al menos 8 caracteres" });
+    }
+    
+    // Evitar que la nueva sea igual a la anterior
+    if (user.pass === newPassword) {
+      return res.status(400).json({ success: false, message: "La nueva contraseña no puede ser igual a la actual" });
+    }
+
+    // 4. Actualizar contraseña
+    const result = await req.db.collection("usuarios").updateOne(
+      { _id: user._id },
+      { 
+        $set: { 
+          pass: newPassword, 
+          updatedAt: new Date().toISOString() 
+        } 
+      }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(500).json({ success: false, message: "No se pudo actualizar la contraseña" });
+    }
+
+    // 5. Registrar Notificación de seguridad
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    await addNotification(req.db, {
+      userId: user._id.toString(),
+      titulo: `Cambio de Contraseña`,
+      descripcion: `La contraseña fue actualizada exitosamente el ${new Date().toLocaleString()}. IP: ${ipAddress}`,
+      prioridad: 2,
+      color: "#ffae00", // Color de advertencia/seguridad
+      icono: "Shield",
+    });
+
+    // Opcional: Revocar otros tokens si se desea forzar logout en otros dispositivos
+    // await req.db.collection("tokens").updateMany({ email: email }, { $set: { active: false } });
+
+    res.json({ success: true, message: "Contraseña actualizada exitosamente" });
+
+  } catch (err) {
+    console.error("Error cambiando contraseña:", err);
+    res.status(500).json({ success: false, message: "Error interno del servidor" });
+  }
+});
 
 // PUT - Actualizar usuario por ID
 router.put("/users/:id", async (req, res) => {
