@@ -741,7 +741,7 @@ async function generarDocumentoTxt(responses, responseId, db, formTitle) {
 
         const buffer = Buffer.from(contenidoTxt, 'utf8');
 
-        const trabajador = responses['NOMBRE_DEL_TRABAJADOR'] || responses['Nombre del trabajador'] || ['NOMBRE_DEL_TRABAJADOR'] || 'TRABAJADOR';
+        const trabajador = responses['NOMBRE_DEL_TRABAJADOR'] || responses['Nombre del trabajador'] || ['NOMBRE DEL TRABAJADOR'] || 'TRABAJADOR';
         const nombreFormulario = formTitle || 'FORMULARIO';
         const fileName = `${limpiarFileName(nombreFormulario)}_${limpiarFileName(trabajador)}`;
 
