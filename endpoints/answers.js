@@ -8,41 +8,57 @@ const { enviarCorreoRespaldo } = require("../utils/mailrespaldo.helper");
 const { validarToken } = require("../utils/validarToken.js");
 
 
-// Función para normalizar nombres de archivos (versión mejorada)
-// Función para normalizar nombres de archivos (versión corregida)
 const normalizeFilename = (filename) => {
-  if (!filename) return 'documento_sin_nombre.pdf';
+  if (!filename) return `documento_sin_nombre_${Date.now()}`;
 
-  const extension = filename.split('.').pop() || 'pdf';
-  const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.')) || 'documento_sin_nombre';
+  // Manejo seguro de la extensión
+  const lastDotIndex = filename.lastIndexOf('.');
+  let extension = '';
+  let nameWithoutExt = filename;
 
-  const normalized = nameWithoutExt
-    // Primero reemplazar caracteres especiales del español
+  if (lastDotIndex > 0 && lastDotIndex < filename.length - 1) {
+    // Solo considerar como extensión si hay algo después del último punto
+    extension = filename.substring(lastDotIndex + 1);
+    nameWithoutExt = filename.substring(0, lastDotIndex);
+
+    // Limpiar la extensión (solo letras y números, máximo 10 caracteres)
+    extension = extension
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .substring(0, 10)
+      .toLowerCase();
+  }
+
+  // Si la extensión quedó vacía o es muy rara, usar extensión por defecto
+  if (!extension || extension.length === 0) {
+    extension = 'bin'; // extensión por defecto para archivos sin extensión válida
+  }
+
+  // Normalizar el nombre del archivo
+  let normalized = nameWithoutExt
+    // Vocales con tilde (minúsculas y mayúsculas)
+    .replace(/[áàäâãå]/g, 'a')
+    .replace(/[ÁÀÄÂÃÅ]/g, 'A')
+    .replace(/[éèëê]/g, 'e')
+    .replace(/[ÉÈËÊ]/g, 'E')
+    .replace(/[íìïî]/g, 'i')
+    .replace(/[ÍÌÏÎ]/g, 'I')
+    .replace(/[óòöôõ]/g, 'o')
+    .replace(/[ÓÒÖÔÕ]/g, 'O')
+    .replace(/[úùüû]/g, 'u')
+    .replace(/[ÚÙÜÛ]/g, 'U')
+    // Caracteres especiales
     .replace(/ñ/g, 'n')
     .replace(/Ñ/g, 'N')
-    .replace(/á/g, 'a')
-    .replace(/é/g, 'e')
-    .replace(/í/g, 'i')
-    .replace(/ó/g, 'o')
-    .replace(/ú/g, 'u')
-    .replace(/Á/g, 'A')
-    .replace(/É/g, 'E')
-    .replace(/Í/g, 'I')
-    .replace(/Ó/g, 'O')
-    .replace(/Ú/g, 'U')
-    .replace(/ü/g, 'u')  // ü se convierte en u
-    .replace(/Ü/g, 'U')  // Ü se convierte en U
-    // Eliminar caracteres especiales restantes (solo permitir letras, números, espacios, guiones, puntos)
+    .replace(/ç/g, 'c')
+    .replace(/Ç/g, 'C')
+    // Eliminar cualquier otro carácter especial
     .replace(/[^a-zA-Z0-9\s._-]/g, '')
-    // Reemplazar espacios múltiples por un solo guión bajo
     .replace(/\s+/g, '_')
-    // Limitar longitud
     .substring(0, 100)
-    // Eliminar guiones bajos al inicio/final
     .replace(/^_+|_+$/g, '');
 
   if (!normalized || normalized.length === 0) {
-    return `documento_${Date.now()}.${extension}`;
+    normalized = `documento_${Date.now()}`;
   }
 
   return `${normalized}.${extension}`;
