@@ -9,9 +9,14 @@ const { validarToken } = require("../utils/validarToken.js");
 
 
 // Función para normalizar nombres de archivos (con mapeo de caracteres)
+// Función para normalizar nombres de archivos (versión completa y segura)
 const normalizeFilename = (filename) => {
-  if (!filename) return `documento_sin_nombre_${Date.now()}`;
+  // Asegurarse de que filename sea siempre un string
+  if (typeof filename !== 'string') {
+    filename = String(filename || `documento_sin_nombre_${Date.now()}`);
+  }
 
+  // Manejo seguro de la extensión
   const lastDotIndex = filename.lastIndexOf('.');
   let extension = '';
   let nameWithoutExt = filename;
@@ -21,38 +26,53 @@ const normalizeFilename = (filename) => {
     nameWithoutExt = filename.substring(0, lastDotIndex);
   }
 
+  // Limpiar la extensión (solo letras y números, máximo 10 caracteres)
+  if (extension) {
+    extension = extension
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .substring(0, 10)
+      .toLowerCase();
+  }
+
+  // Si no hay extensión válida, usar 'bin'
   if (!extension) extension = 'bin';
 
-  // Mapeo de caracteres acentuados a sus equivalentes sin acento
-  const map = {
-    'á': 'a', 'à': 'a', 'ä': 'a', 'â': 'a', 'ã': 'a', 'å': 'a',
-    'Á': 'A', 'À': 'A', 'Ä': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A',
-    'é': 'e', 'è': 'e', 'ë': 'e', 'ê': 'e',
-    'É': 'E', 'È': 'E', 'Ë': 'E', 'Ê': 'E',
-    'í': 'i', 'ì': 'i', 'ï': 'i', 'î': 'i',
-    'Í': 'I', 'Ì': 'I', 'Ï': 'I', 'Î': 'I',
-    'ó': 'o', 'ò': 'o', 'ö': 'o', 'ô': 'o', 'õ': 'o',
-    'Ó': 'O', 'Ò': 'O', 'Ö': 'O', 'Ô': 'O', 'Õ': 'O',
-    'ú': 'u', 'ù': 'u', 'ü': 'u', 'û': 'u',
-    'Ú': 'U', 'Ù': 'U', 'Ü': 'U', 'Û': 'U',
-    'ñ': 'n', 'Ñ': 'N',
-    'ç': 'c', 'Ç': 'C'
-  };
-
-  let normalized = nameWithoutExt.replace(/[^\u0000-\u007E]/g, function (char) {
-    return map[char] || '';
-  });
-
-  // Luego eliminar cualquier otro carácter especial (por si acaso)
-  normalized = normalized
+  // Normalizar el nombre del archivo manteniendo mayúsculas
+  let normalized = nameWithoutExt
+    // Vocales con tilde (minúsculas)
+    .replace(/á/g, 'a')
+    .replace(/é/g, 'e')
+    .replace(/í/g, 'i')
+    .replace(/ó/g, 'o')
+    .replace(/ú/g, 'u')
+    .replace(/ü/g, 'u')
+    // Vocales con tilde (mayúsculas)  
+    .replace(/Á/g, 'A')
+    .replace(/É/g, 'E')
+    .replace(/Í/g, 'I')
+    .replace(/Ó/g, 'O')
+    .replace(/Ú/g, 'U')
+    .replace(/Ü/g, 'U')
+    // Caracteres especiales
+    .replace(/ñ/g, 'n')
+    .replace(/Ñ/g, 'N')
+    .replace(/ç/g, 'c')
+    .replace(/Ç/g, 'C')
+    // Eliminar cualquier otro carácter especial (excepto letras, números, espacios, guiones, puntos)
     .replace(/[^a-zA-Z0-9\s._-]/g, '')
+    // Reemplazar espacios múltiples por un solo guión bajo
     .replace(/\s+/g, '_')
+    // Limitar longitud del nombre (sin contar extensión)
     .substring(0, 100)
+    // Eliminar guiones bajos al inicio/final
     .replace(/^_+|_+$/g, '');
 
-  if (!normalized) normalized = `documento_${Date.now()}`;
+  // Si después de normalizar queda vacío, usar nombre por defecto
+  if (!normalized || normalized.length === 0) {
+    normalized = `documento_${Date.now()}`;
+  }
 
-  return `${normalized}.${extension.toLowerCase()}`;
+  return `${normalized}.${extension}`;
 };
 
 // Configurar Multer para almacenar en memoria (buffer)

@@ -617,7 +617,10 @@ async function generarDocumentoDesdePlantilla(responses, responseId, db, plantil
 }
 
 function limpiarFileName(texto) {
-    if (!texto) return 'documento';
+    // Asegurarse de que texto sea siempre un string
+    if (typeof texto !== 'string') {
+        texto = String(texto || 'documento');
+    }
 
     return texto
         .replace(/ñ/g, 'n')
