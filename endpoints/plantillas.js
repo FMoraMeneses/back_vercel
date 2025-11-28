@@ -12,19 +12,16 @@ router.post("/", async (req, res) => {
     let result;
 
     if (!formId) {
-      return res.status(400).json({ error: "El campo 'formId' es obligatorio para asociar la plantilla." });
+        return res.status(400).json({ error: "El campo 'formId' es obligatorio para asociar la plantilla." });
     }
 
     if (!data.id) {
       // 1. CREACIÓN: Insertar nueva plantilla
-      const plantillaToInsert = {
+      result = await req.db.collection("plantillas").insertOne({
         ...req.body,
-        id: newPlantillaId.toString(),  // ← GUARDAR EN LA BD
         createdAt: new Date(),
         updatedAt: new Date(),
-      };
-
-      result = await req.db.collection("plantillas").insertOne(plantillaToInsert);
+      });
       const newPlantillaId = result.insertedId;
 
       // 2. VINCULACIÓN CRÍTICA: Actualizar el formulario con el ID de la plantilla
@@ -32,22 +29,20 @@ router.post("/", async (req, res) => {
         { _id: new ObjectId(formId) },
         { $set: { plantillaId: newPlantillaId } }
       );
-
-      res.status(201).json(plantillaToInsert);  // ← Ya incluye id y _id
+      
+      res.status(201).json({ ...req.body, _id: newPlantillaId });
 
     } else {
       // 1. ACTUALIZACIÓN (PUT): Actualizar la plantilla existente
       result = await req.db.collection("plantillas").findOneAndUpdate(
         { _id: new ObjectId(data.id) },
-        {
-          $set: {
-            ...req.body,
+        { $set: { 
+            ...req.body, 
             updatedAt: new Date()
-          }
-        },
+        } },
         { returnDocument: "after" }
       );
-
+      
       if (!result) return res.status(404).json({ error: "Plantilla no encontrada" });
 
       res.status(200).json(result);
@@ -90,7 +85,7 @@ router.delete("/:id", async (req, res) => {
 
     // 1. Buscar la plantilla para obtener el formId asociado
     const plantilla = await req.db.collection("plantillas").findOne({ _id: new ObjectId(plantillaId) });
-
+    
     // 2. Eliminar la plantilla
     const result = await req.db.collection("plantillas").deleteOne({ _id: new ObjectId(plantillaId) });
 
@@ -100,10 +95,10 @@ router.delete("/:id", async (req, res) => {
 
     // 3. DESVINCULAR CRÍTICA: Eliminar la referencia 'plantillaId' del formulario asociado
     if (plantilla && plantilla.formId) {
-      await req.db.collection("forms").updateOne(
+       await req.db.collection("forms").updateOne(
         { _id: new ObjectId(plantilla.formId) },
         { $unset: { plantillaId: "" } } // Remueve el campo plantillaId
-      );
+       );
     }
 
     res.status(200).json({ message: "Plantilla eliminada y desvinculada exitosamente" });
