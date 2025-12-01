@@ -212,6 +212,168 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.post("/admin", async (req, res) => {
+  try {
+    const {
+      formId,
+      user: adminUser, // Usuario que realiza la petición (el administrador)
+      responses,
+      formTitle,
+      adjuntos = [],
+      mail: correoRespaldo
+    } = req.body;
+
+    // Campos del Destinatario que vienen en el payload de 'responses'
+    const destinatarioNombre = responses?.Destinatario;
+    // ASUMIMOS que la empresa viene en otro campo de responses, por ejemplo, 'EmpresaDestino'
+    // **AJUSTA ESTE NOMBRE DE CAMPO ('EmpresaDestino') si es diferente en tu formulario.**
+    const destinatarioEmpresa = responses?.EmpresaDestino; 
+
+    // Validación básica del Destinatario
+    if (!destinatarioNombre || !destinatarioEmpresa) {
+        return res.status(400).json({ error: "El nombre y la empresa del destinatario son requeridos en las respuestas." });
+    }
+
+    // --- VALIDACIÓN DEL ADMINISTRADOR ---
+    const adminToken = adminUser?.token;
+    console.log("=== INICIO GUARDAR RESPUESTA ADMIN ===");
+
+    const tokenValido = await validarToken(req.db, adminToken);
+    if (!tokenValido.ok) {
+      return res.status(401).json({ error: tokenValido.reason });
+    }
+
+    // ----------------------------------------------------
+    // --- LÓGICA DE BÚSQUEDA DEL USUARIO DESTINATARIO ---
+    // ----------------------------------------------------
+    const userDestinatario = await req.db.collection("users").findOne({
+        nombre: destinatarioNombre,
+        empresa: destinatarioEmpresa
+        // Puedes agregar más filtros si es necesario, como estado activo
+    }, {
+        // Proyectar solo los campos necesarios para el objeto 'user'
+        projection: {
+            _id: 1, // Necesario para el uid
+            nombre: 1,
+            empresa: 1,
+            mail: 1, // Asumo que el campo de correo es 'mail'
+        }
+    });
+
+    if (!userDestinatario) {
+        return res.status(404).json({ 
+            error: `Destinatario no encontrado: ${destinatarioNombre} en ${destinatarioEmpresa}.` 
+        });
+    }
+
+    // Construir el objeto 'user' para la respuesta con la estructura correcta
+    const destinatarioUserObject = {
+        uid: userDestinatario._id.toString(), // Usamos el _id como uid
+        nombre: userDestinatario.nombre,
+        empresa: userDestinatario.empresa,
+        mail: userDestinatario.mail,
+        // No incluimos 'token', 'status', ni 'createdAt', como solicitaste.
+    };
+
+    // Continuar con las validaciones del Formulario
+    const form = await req.db
+      .collection("forms")
+      .findOne({ _id: new ObjectId(formId) });
+
+    if (!form) {
+      return res.status(404).json({ error: "Formulario no encontrado" });
+    }
+
+    // --- PUNTO CLAVE: INSERCIÓN CON EL DESTINATARIO COMO 'user' ---
+    const now = new Date();
+    const result = await req.db.collection("respuestas").insertOne({
+      formId,
+      user: destinatarioUserObject, // **¡OBJETO DESTINATARIO COMPLETO!**
+      responses,
+      formTitle,
+      mail: correoRespaldo, // Usar el mail del payload, si corresponde.
+      status: "pendiente",
+      createdAt: now,
+      updatedAt: now, // Inicializar updatedAt
+      injectedBy: adminUser?.uid, // Rastreamos quién la inyectó
+    });
+
+    console.log("✅ Solicitud inyectada guardada con ID:", result.insertedId);
+
+    // Lógica de Adjuntos
+    if (adjuntos.length > 0) {
+      const documentoAdjuntos = {
+        responseId: result.insertedId,
+        submittedAt: now.toISOString(),
+        adjuntos: []
+      };
+
+      await req.db.collection("adjuntos").insertOne(documentoAdjuntos);
+      console.log("✅ Documento de adjuntos creado (vacío)");
+    }
+
+    // Lógica de Correo de Respaldo (usando el mail del destinatario, si aplica)
+    let resultadoCorreo = { enviado: false };
+    if (userDestinatario.mail) { // Puedes usar el mail del usuario real
+      resultadoCorreo = await enviarCorreoRespaldo(
+        userDestinatario.mail, 
+        formTitle,
+        destinatarioUserObject, 
+        responses,
+        form.questions
+      );
+    }
+    
+    // --- NOTIFICACIONES ---
+    
+    // 1. Notificación a RRHH/Administradores
+    await addNotification(req.db, {
+      filtro: { cargo: "RRHH" },
+      titulo: `Se ha creado una solicitud para ${destinatarioNombre}`,
+      descripcion: `El administrador ${adminUser?.nombre} creó la solicitud "${formTitle}".`,
+      prioridad: 2,
+      color: "#bb8900ff",
+      icono: "form",
+      actionUrl: `/RespuestasForms?id=${result.insertedId}`,
+    });
+
+    // 2. Notificación al **Cliente/Destinatario** (usando el uid real)
+    await addNotification(req.db, {
+      userId: destinatarioUserObject.uid,
+      titulo: "Nueva Solicitud Administrativa",
+      descripcion: `Tienes una nueva solicitud pendiente: ${formTitle}.`,
+      prioridad: 2,
+      icono: "Warning",
+      color: "#ff8c00ff",
+      actionUrl: `/?id=${result.insertedId}`,
+    });
+
+    // Generación de documento
+    try {
+      await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form.section, destinatarioUserObject, formId, formTitle);
+      console.log("Documento generado automáticamente (Solicitud Inyectada):", result.insertedId);
+    } catch (error) {
+      console.error("Error generando documento (Solicitud Inyectada):", error.message);
+    }
+
+    console.log("=== FIN GUARDAR RESPUESTA ADMIN ===");
+
+    // Retornar la respuesta
+    res.json({
+      _id: result.insertedId,
+      formId,
+      user: destinatarioUserObject, 
+      responses,
+      formTitle,
+      mail: userDestinatario.mail,
+    });
+
+  } catch (err) {
+    console.error("Error general al guardar respuesta (Admin):", err);
+    res.status(500).json({ error: "Error al guardar respuesta (Admin): " + err.message });
+  }
+});
+
 // Obtener adjuntos de una respuesta específica
 router.get("/:id/adjuntos", async (req, res) => {
   try {
@@ -904,7 +1066,6 @@ router.get("/:id/archived", async (req, res) => {
     res.status(500).json({ error: "Error finalizando respuesta: " + err.message });
   }
 });
-
 
 
 
