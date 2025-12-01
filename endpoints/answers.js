@@ -7,6 +7,7 @@ const { generarAnexoDesdeRespuesta } = require("../utils/generador.helper");
 const { enviarCorreoRespaldo } = require("../utils/mailrespaldo.helper");
 const { validarToken } = require("../utils/validarToken.js");
 
+
 // Función para normalizar nombres de archivos (con mapeo de caracteres)
 // Función para normalizar nombres de archivos (versión completa y segura)
 const normalizeFilename = (filename) => {
@@ -907,64 +908,49 @@ router.get("/:id/archived", async (req, res) => {
 
 
 
-// Aprobar formulario y guardar en aprobados (MÚLTIPLES ARCHIVOS)
-router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res) => {
+// Aprobar formulario y guardar en aprobados
+router.post("/:id/approve", upload.single('correctedFile'), async (req, res) => {
   try {
     console.log("Debug: Iniciando approve para ID:", req.params.id);
-    console.log("Debug: Archivos recibidos:", req.files?.length || 0);
 
-    const respuesta = await req.db.collection("respuestas").findOne({
-      _id: new ObjectId(req.params.id)
-    });
+    const respuesta = await req.db.collection("respuestas").findOne({ _id: new ObjectId(req.params.id) });
 
     if (!respuesta) {
       console.log("Debug: Respuesta no encontrada para ID:", req.params.id);
       return res.status(404).json({ error: "Respuesta no encontrada" });
     }
 
-    // COMPATIBILIDAD: Si no hay archivos, verificar correctedFile existente
-    if ((!req.files || req.files.length === 0) && !respuesta.correctedFile) {
-      console.log("Debug: No hay archivos para aprobar");
-      return res.status(400).json({ error: "No hay archivos para aprobar" });
+    if (!respuesta) {
+      console.log("Debug: Respuesta no encontrada para ID:", req.params.id);
+      return res.status(404).json({ error: "Respuesta no encontrada" });
     }
 
-    let correctedFilesData = [];
+    if (!respuesta.correctedFile && !req.file) {
+      console.log("Debug: No hay corrección subida para ID:", req.params.id);
+      return res.status(400).json({ error: "No hay corrección subida para aprobar" });
+    }
 
-    // Procesar múltiples archivos nuevos
-    if (req.files && req.files.length > 0) {
-      console.log(`Debug: Procesando ${req.files.length} archivos nuevos`);
+    let correctedFileData;
 
-      correctedFilesData = req.files.map((file, index) => ({
-        fileName: normalizeFilename(file.originalname),
+    if (req.file) {
+      console.log("Debug: Subiendo nuevo archivo de corrección:", req.file.originalname);
+
+      const normalizedFileName = normalizeFilename(req.file.originalname);
+
+      correctedFileData = {
+        fileName: normalizedFileName,
         tipo: 'pdf',
-        fileData: file.buffer,
-        fileSize: file.size,
-        mimeType: file.mimetype,
-        uploadedAt: new Date(),
-        order: index, // Para mantener orden
-        description: `Documento ${index + 1}` // Se puede personalizar
-      }));
+        fileData: req.file.buffer,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        uploadedAt: new Date()
+      };
+    } else {
+      correctedFileData = respuesta.correctedFile;
+      console.log("Debug: Usando corrección existente:", correctedFileData.fileName);
     }
 
-    // COMPATIBILIDAD: Si hay un correctedFile existente (formato antiguo)
-    // Lo convertimos a array para mantener compatibilidad
-    if (respuesta.correctedFile && correctedFilesData.length === 0) {
-      console.log("Debug: Usando corrección existente (formato antiguo)");
-
-      correctedFilesData = [{
-        fileName: respuesta.correctedFile.fileName,
-        tipo: respuesta.correctedFile.tipo || 'pdf',
-        fileData: respuesta.correctedFile.fileData,
-        fileSize: respuesta.correctedFile.fileSize,
-        mimeType: respuesta.correctedFile.mimeType || 'application/pdf',
-        uploadedAt: respuesta.correctedFile.uploadedAt || new Date(),
-        order: 0,
-        description: 'Documento principal',
-        isLegacyFormat: true // Marcar como formato antiguo para referencia
-      }];
-    }
-
-    console.log("Debug: Total de archivos a aprobar:", correctedFilesData.length);
+    console.log("Debug: Aprobando respuesta con corrección:", correctedFileData.fileName);
 
     const existingSignature = await req.db.collection("firmados").findOne({
       responseId: req.params.id
@@ -976,7 +962,6 @@ router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res)
       nuevoEstado = "firmado";
     }
 
-    // Actualizar estado de la respuesta
     const updateResult = await req.db.collection("respuestas").updateOne(
       { _id: new ObjectId(req.params.id) },
       {
@@ -986,79 +971,50 @@ router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res)
           updatedAt: new Date()
         },
         $unset: {
-          correctedFile: "" // Eliminar campo antiguo
+          correctedFile: ""
         }
       }
     );
 
-    console.log("Debug: Resultado de actualización de estado:", updateResult);
-
-    // Verificar si ya existe un documento aprobado
-    const existingApproved = await req.db.collection("aprobados").findOne({
-      responseId: req.params.id
-    });
-
-    let insertOrUpdateResult;
-
-    if (existingApproved) {
-      // Si ya existe, ACTUALIZAR manteniendo compatibilidad
-      insertOrUpdateResult = await req.db.collection("aprobados").updateOne(
-        { responseId: req.params.id },
-        {
-          $set: {
-            correctedFiles: correctedFilesData, // NUEVO: array de archivos
-            // MANTENER correctedFile para compatibilidad (primer archivo)
-            correctedFile: correctedFilesData[0] || null,
-            approvedAt: new Date(),
-            approvedBy: req.user?.id,
-            updatedAt: new Date()
-          }
-        }
-      );
-      console.log("Debug: Documento aprobado actualizado");
-    } else {
-      // Si no existe, CREAR NUEVO con ambos formatos
-      insertOrUpdateResult = await req.db.collection("aprobados").insertOne({
-        responseId: req.params.id,
-        correctedFiles: correctedFilesData, // NUEVO: array de archivos
-        correctedFile: correctedFilesData[0] || null, // COMPATIBILIDAD: primer archivo
-        approvedAt: new Date(),
-        approvedBy: req.user?.id,
-        createdAt: new Date(),
-        formTitle: respuesta.formTitle,
-        submittedBy: respuesta.submittedBy,
-        company: respuesta.company
-      });
-      console.log("Debug: Nuevo documento aprobado creado");
-    }
-
-    // Notificación al usuario
     await addNotification(req.db, {
       userId: respuesta.user?.uid,
-      titulo: "Documentos Aprobados",
-      descripcion: `Se han aprobado ${correctedFilesData.length} documento(s) para el formulario ${respuesta.formTitle}`,
+      titulo: "Documento Generado",
+      descripcion: `Se ha generado el documento asociado al formulario ${respuesta.formTitle}`,
       prioridad: 2,
       icono: 'file-text',
       color: '#47db34ff',
-      actionUrl: `/?id=${respuesta._id}`,
+      actionUrl: `/?id=${respuesta.responseId}`,
     });
+
+    console.log("Debug: Resultado de actualización de estado:", updateResult);
+
+    const insertResult = await req.db.collection("aprobados").insertOne({
+      responseId: req.params.id,
+      correctedFile: correctedFileData,
+      approvedAt: new Date(),
+      approvedBy: req.user?.id,
+      createdAt: new Date(),
+      formTitle: respuesta.formTitle,
+      submittedBy: respuesta.submittedBy,
+      company: respuesta.company
+    });
+
+    console.log("Debug: Resultado de inserción en aprobados:", insertResult);
 
     res.json({
       message: existingSignature
-        ? `Formulario aprobado con ${correctedFilesData.length} archivo(s) y restaurado a estado firmado`
-        : `Formulario aprobado con ${correctedFilesData.length} archivo(s)`,
+        ? "Formulario aprobado y restaurado a estado firmado (existía firma previa)"
+        : "Formulario aprobado correctamente",
       approved: true,
       status: nuevoEstado,
-      filesCount: correctedFilesData.length,
       hadExistingSignature: !!existingSignature
     });
 
   } catch (err) {
     console.error("Error aprobando formulario:", err);
-    res.status(500).json({ error: "Error aprobando formulario: " + err.message });
+    res.status(500).json({ error: "Error aprobando formulario" });
   }
 });
-
 
 // Eliminar corrección de formularios APROBADOS
 router.delete("/:id/remove-correction", async (req, res) => {
@@ -1118,84 +1074,11 @@ router.delete("/:id/remove-correction", async (req, res) => {
   }
 });
 
-// Obtener lista de archivos aprobados
-router.get("/approved-files/:responseId", async (req, res) => {
-  try {
-    const { responseId } = req.params;
-
-    console.log("Obteniendo archivos aprobados para:", responseId);
-
-    const approvedDoc = await req.db.collection("aprobados").findOne({
-      responseId: responseId
-    });
-
-    // Si no hay documento aprobado, devolver array vacío (no 404)
-    if (!approvedDoc) {
-      console.log("No hay documento aprobado para responseId:", responseId);
-      return res.json({
-        success: true,
-        files: [],
-        totalFiles: 0,
-        responseId: responseId
-      });
-    }
-
-    // HELPER: Obtener todos los archivos (compatible)
-    function getAllApprovedFiles(doc) {
-      const files = [];
-
-      // Si tiene array de archivos (nuevo formato)
-      if (doc.correctedFiles && Array.isArray(doc.correctedFiles)) {
-        doc.correctedFiles.forEach((file, index) => {
-          files.push({
-            index: index,
-            fileName: file.fileName,
-            fileSize: file.fileSize,
-            mimeType: file.mimeType,
-            uploadedAt: file.uploadedAt,
-            description: file.description || `Documento ${index + 1}`,
-            order: file.order || index
-          });
-        });
-      }
-      // Si solo tiene correctedFile (formato antiguo)
-      else if (doc.correctedFile) {
-        files.push({
-          index: 0,
-          fileName: doc.correctedFile.fileName,
-          fileSize: doc.correctedFile.fileSize,
-          mimeType: doc.correctedFile.mimeType,
-          uploadedAt: doc.correctedFile.uploadedAt,
-          description: 'Documento principal',
-          order: 0,
-          isLegacyFormat: true
-        });
-      }
-
-      return files;
-    }
-
-    const files = getAllApprovedFiles(approvedDoc);
-
-    res.json({
-      success: true,
-      files: files,
-      totalFiles: files.length,
-      responseId: responseId,
-      formTitle: approvedDoc.formTitle
-    });
-
-  } catch (err) {
-    console.error("Error obteniendo archivos aprobados:", err);
-    res.status(500).json({ error: "Error obteniendo archivos aprobados: " + err.message });
-  }
-});
-
 router.get("/data-approved/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
 
-    console.log("Obteniendo datos de archivos aprobados para:", responseId);
+    console.log("Obteniendo datos de archivo aprobado para:", responseId);
 
     const approvedDoc = await req.db.collection("aprobados").findOne({
       responseId: responseId
@@ -1206,67 +1089,28 @@ router.get("/data-approved/:responseId", async (req, res) => {
       return res.status(404).json({ error: "Documento aprobado no encontrado" });
     }
 
-    // Usar el helper para obtener archivos
-    function getAllApprovedFiles(doc) {
-      const files = [];
-
-      if (doc.correctedFiles && Array.isArray(doc.correctedFiles)) {
-        doc.correctedFiles.forEach((file, index) => {
-          files.push({
-            index: index,
-            fileName: file.fileName,
-            fileSize: file.fileSize,
-            mimeType: file.mimeType,
-            uploadedAt: file.uploadedAt,
-            description: file.description || `Documento ${index + 1}`
-          });
-        });
-      } else if (doc.correctedFile) {
-        files.push({
-          index: 0,
-          fileName: doc.correctedFile.fileName,
-          fileSize: doc.correctedFile.fileSize,
-          mimeType: doc.correctedFile.mimeType,
-          uploadedAt: doc.correctedFile.uploadedAt,
-          description: 'Documento principal'
-        });
-      }
-
-      return files;
+    if (!approvedDoc.correctedFile) {
+      console.log("No hay correctedFile en el documento aprobado:", responseId);
+      return res.status(404).json({ error: "Archivo corregido no disponible" });
     }
 
-    const files = getAllApprovedFiles(approvedDoc);
-
-    if (files.length === 0) {
-      return res.status(404).json({ error: "No hay archivos aprobados disponibles" });
-    }
-
-    // Para compatibilidad con frontend antiguo, también devolver el primer archivo
-    const firstFile = files[0];
-
+    // Retornar solo los datos específicos que necesitas
     const responseData = {
-      // Datos del primer archivo (para compatibilidad)
-      fileName: firstFile.fileName,
-      fileSize: firstFile.fileSize,
-      mimeType: firstFile.mimeType,
-      uploadedAt: firstFile.uploadedAt,
-
-      // Nuevos campos para múltiples archivos
-      files: files,
-      totalFiles: files.length,
-
-      // Campos existentes
+      fileName: approvedDoc.correctedFile.fileName,
+      fileSize: approvedDoc.correctedFile.fileSize,
+      mimeType: approvedDoc.correctedFile.mimeType,
+      uploadedAt: approvedDoc.correctedFile.uploadedAt,
       approvedAt: approvedDoc.approvedAt,
       formTitle: approvedDoc.formTitle
     };
 
-    console.log(`Retornando ${files.length} archivos para responseId:`, responseId);
+    console.log("Datos retornados para responseId:", responseId, responseData);
 
     res.json(responseData);
 
   } catch (err) {
-    console.error("Error obteniendo datos de archivos aprobados:", err);
-    res.status(500).json({ error: "Error obteniendo datos de archivos aprobados: " + err.message });
+    console.error("Error obteniendo datos de archivo aprobado:", err);
+    res.status(500).json({ error: "Error obteniendo datos de archivo aprobado: " + err.message });
   }
 });
 
