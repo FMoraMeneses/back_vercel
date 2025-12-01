@@ -913,8 +913,8 @@ router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res)
     console.log("Debug: Iniciando approve para ID:", req.params.id);
     console.log("Debug: Archivos recibidos:", req.files?.length || 0);
 
-    const respuesta = await req.db.collection("respuestas").findOne({ 
-      _id: new ObjectId(req.params.id) 
+    const respuesta = await req.db.collection("respuestas").findOne({
+      _id: new ObjectId(req.params.id)
     });
 
     if (!respuesta) {
@@ -933,7 +933,7 @@ router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res)
     // Procesar múltiples archivos nuevos
     if (req.files && req.files.length > 0) {
       console.log(`Debug: Procesando ${req.files.length} archivos nuevos`);
-      
+
       correctedFilesData = req.files.map((file, index) => ({
         fileName: normalizeFilename(file.originalname),
         tipo: 'pdf',
@@ -945,12 +945,12 @@ router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res)
         description: `Documento ${index + 1}` // Se puede personalizar
       }));
     }
-    
+
     // COMPATIBILIDAD: Si hay un correctedFile existente (formato antiguo)
     // Lo convertimos a array para mantener compatibilidad
     if (respuesta.correctedFile && correctedFilesData.length === 0) {
       console.log("Debug: Usando corrección existente (formato antiguo)");
-      
+
       correctedFilesData = [{
         fileName: respuesta.correctedFile.fileName,
         tipo: respuesta.correctedFile.tipo || 'pdf',
@@ -999,7 +999,7 @@ router.post("/:id/approve", upload.array('correctedFiles', 10), async (req, res)
     });
 
     let insertOrUpdateResult;
-    
+
     if (existingApproved) {
       // Si ya existe, ACTUALIZAR manteniendo compatibilidad
       insertOrUpdateResult = await req.db.collection("aprobados").updateOne(
@@ -1129,15 +1129,21 @@ router.get("/approved-files/:responseId", async (req, res) => {
       responseId: responseId
     });
 
+    // Si no hay documento aprobado, devolver array vacío (no 404)
     if (!approvedDoc) {
-      console.log("No se encontró documento aprobado para responseId:", responseId);
-      return res.status(404).json({ error: "Documento aprobado no encontrado" });
+      console.log("No hay documento aprobado para responseId:", responseId);
+      return res.json({
+        success: true,
+        files: [],
+        totalFiles: 0,
+        responseId: responseId
+      });
     }
 
     // HELPER: Obtener todos los archivos (compatible)
     function getAllApprovedFiles(doc) {
       const files = [];
-      
+
       // Si tiene array de archivos (nuevo formato)
       if (doc.correctedFiles && Array.isArray(doc.correctedFiles)) {
         doc.correctedFiles.forEach((file, index) => {
@@ -1151,7 +1157,7 @@ router.get("/approved-files/:responseId", async (req, res) => {
             order: file.order || index
           });
         });
-      } 
+      }
       // Si solo tiene correctedFile (formato antiguo)
       else if (doc.correctedFile) {
         files.push({
@@ -1165,7 +1171,7 @@ router.get("/approved-files/:responseId", async (req, res) => {
           isLegacyFormat: true
         });
       }
-      
+
       return files;
     }
 
@@ -1203,7 +1209,7 @@ router.get("/data-approved/:responseId", async (req, res) => {
     // Usar el helper para obtener archivos
     function getAllApprovedFiles(doc) {
       const files = [];
-      
+
       if (doc.correctedFiles && Array.isArray(doc.correctedFiles)) {
         doc.correctedFiles.forEach((file, index) => {
           files.push({
@@ -1225,7 +1231,7 @@ router.get("/data-approved/:responseId", async (req, res) => {
           description: 'Documento principal'
         });
       }
-      
+
       return files;
     }
 
@@ -1244,11 +1250,11 @@ router.get("/data-approved/:responseId", async (req, res) => {
       fileSize: firstFile.fileSize,
       mimeType: firstFile.mimeType,
       uploadedAt: firstFile.uploadedAt,
-      
+
       // Nuevos campos para múltiples archivos
       files: files,
       totalFiles: files.length,
-      
+
       // Campos existentes
       approvedAt: approvedDoc.approvedAt,
       formTitle: approvedDoc.formTitle
