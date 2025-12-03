@@ -1267,6 +1267,16 @@ router.delete("/delete-corrected-file/:responseId", async (req, res) => {
       return res.status(404).json({ error: "Archivo no encontrado" });
     }
 
+    // Guardar información del estado actual antes de eliminar
+    const respuestaActual = await req.db.collection("respuestas").findOne({
+      _id: new ObjectId(responseId)
+    });
+
+    const estadoActual = respuestaActual?.status;
+    const tieneFirma = await req.db.collection("firmados").findOne({
+      responseId: responseId
+    });
+
     // Eliminar el archivo específico del array
     const result = await req.db.collection("aprobados").updateOne(
       { responseId: responseId },
@@ -1287,26 +1297,87 @@ router.delete("/delete-corrected-file/:responseId", async (req, res) => {
       responseId: responseId
     });
 
-    // Si no quedan archivos, eliminar el documento completo
+    // Si no quedan archivos, eliminar el documento completo y cambiar estado
     if (!updatedDoc.correctedFiles || updatedDoc.correctedFiles.length === 0) {
       await req.db.collection("aprobados").deleteOne({ responseId: responseId });
+
+      // Determinar el nuevo estado
+      let nuevoEstado = "en_revision";
+
+      // Solo cambiar a 'en_revision' si actualmente está en 'aprobado' o 'firmado'
+      // y NO hay firma existente
+      if ((estadoActual === 'aprobado' || estadoActual === 'firmado') && !tieneFirma) {
+        nuevoEstado = "en_revision";
+      } else if (estadoActual === 'firmado' && tieneFirma) {
+        // Si hay firma, mantener en 'firmado' pero sin correcciones
+        nuevoEstado = "firmado";
+      } else if (estadoActual === 'finalizado' || estadoActual === 'archivado') {
+        // No cambiar estados finales
+        nuevoEstado = estadoActual;
+      }
 
       await req.db.collection("respuestas").updateOne(
         { _id: new ObjectId(responseId) },
         {
           $set: {
             hasCorrection: false,
+            status: nuevoEstado,
             updatedAt: new Date()
           }
         }
       );
-    }
 
-    res.json({
-      success: true,
-      message: "Archivo eliminado exitosamente",
-      deletedFile: fileName
-    });
+      // Enviar notificación si cambió el estado
+      if (nuevoEstado === 'en_revision' && estadoActual !== 'en_revision') {
+        await addNotification(req.db, {
+          filtro: { cargo: "RRHH" },
+          titulo: `Correcciones eliminadas - Volviendo a revisión`,
+          descripcion: `Se eliminaron todas las correcciones del formulario ${respuestaActual?.formTitle}. El estado ha vuelto a 'en_revision'.`,
+          prioridad: 2,
+          icono: 'RefreshCw',
+          color: '#ff9800',
+          actionUrl: `/RespuestasForms?id=${responseId}`,
+        });
+
+        await addNotification(req.db, {
+          userId: respuestaActual?.user?.uid,
+          titulo: "Documento vuelve a revisión",
+          descripcion: `Las correcciones del formulario ${respuestaActual?.formTitle} han sido eliminadas. El documento está nuevamente en revisión.`,
+          prioridad: 2,
+          icono: 'RefreshCw',
+          color: '#ff9800',
+          actionUrl: `/?id=${responseId}`,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Archivo eliminado exitosamente. No quedan archivos corregidos.",
+        deletedFile: fileName,
+        statusChanged: nuevoEstado !== estadoActual,
+        newStatus: nuevoEstado,
+        hadFiles: false
+      });
+
+    } else {
+      // Si aún quedan archivos, solo actualizar la fecha
+      await req.db.collection("respuestas").updateOne(
+        { _id: new ObjectId(responseId) },
+        {
+          $set: {
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      res.json({
+        success: true,
+        message: "Archivo eliminado exitosamente",
+        deletedFile: fileName,
+        remainingFiles: updatedDoc.correctedFiles.length,
+        hadFiles: true
+      });
+    }
 
   } catch (err) {
     console.error("Error eliminando archivo corregido:", err);
@@ -1513,8 +1584,18 @@ router.delete("/:id/remove-correction", async (req, res) => {
       responseId: responseId
     });
 
+    const respuestaActual = await req.db.collection("respuestas").findOne({
+      _id: new ObjectId(responseId)
+    });
+
+    let nuevoEstado = "en_revision";
+
+    // Determinar nuevo estado según si hay firma
     if (existingSignature) {
-      console.log("Existe documento firmado, procediendo con eliminación de aprobado");
+      nuevoEstado = "firmado";
+      console.log("Existe documento firmado, manteniendo estado 'firmado'");
+    } else if (respuestaActual?.status === 'finalizado' || respuestaActual?.status === 'archivado') {
+      nuevoEstado = respuestaActual.status;
     }
 
     // Eliminar el documento completo de 'aprobados'
@@ -1529,7 +1610,7 @@ router.delete("/:id/remove-correction", async (req, res) => {
       { _id: new ObjectId(responseId) },
       {
         $set: {
-          status: "en_revision",
+          status: nuevoEstado,
           updatedAt: new Date()
         },
         $unset: {
@@ -1554,7 +1635,8 @@ router.delete("/:id/remove-correction", async (req, res) => {
       message: "Corrección eliminada exitosamente",
       updatedRequest: updatedResponse,
       hasExistingSignature: !!existingSignature,
-      deletedFiles: deleteResult.deletedCount > 0 ? "Todos los archivos fueron eliminados" : "No había archivos para eliminar"
+      deletedFiles: deleteResult.deletedCount > 0 ? "Todos los archivos fueron eliminados" : "No había archivos para eliminar",
+      newStatus: nuevoEstado
     });
 
   } catch (err) {
