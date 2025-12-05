@@ -1752,23 +1752,23 @@ router.get("/:responseId/client-signature", async (req, res) => {
 
     // Obtener el buffer de datos
     const fileBuffer = pdfData.fileData.buffer || pdfData.fileData;
-
+    
     if (!fileBuffer || fileBuffer.length === 0) {
       console.log(`Buffer de archivo vacío para responseId: ${responseId}`);
       return res.status(404).json({ error: "Datos del archivo no disponibles" });
     }
 
-    // CORREGIR: Usar encodeURIComponent para nombres con caracteres especiales
+    // Configurar headers para descarga
     const fileName = pdfData.fileName || `documento_firmado_${responseId}.pdf`;
-    const encodedFileName = encodeURIComponent(fileName);
-
-    // CONFIGURAR HEADERS CORRECTAMENTE - IMPORTANTE: Usar res.setHeader() individualmente
-    res.setHeader('Content-Type', pdfData.mimeType || 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodedFileName}`);
-    res.setHeader('Content-Length', pdfData.fileSize || fileBuffer.length);
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+    
+    res.set({
+      'Content-Type': pdfData.mimeType || 'application/pdf',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': pdfData.fileSize || fileBuffer.length,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
 
     console.log(`Enviando documento firmado: ${fileName}, tamaño: ${pdfData.fileSize || fileBuffer.length} bytes`);
 
@@ -1777,8 +1777,8 @@ router.get("/:responseId/client-signature", async (req, res) => {
 
   } catch (err) {
     console.error("Error descargando documento firmado:", err);
-    res.status(500).json({
-      error: "Error descargando documento firmado: " + err.message
+    res.status(500).json({ 
+      error: "Error descargando documento firmado: " + err.message 
     });
   }
 });
