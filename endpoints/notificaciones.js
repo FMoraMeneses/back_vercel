@@ -60,7 +60,7 @@ router.get("/:nombre", async (req, res) => {
 router.put("/:userId/:notiId/leido", async (req, res) => {
   try {
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      { _id: new ObjectId(req.params.userId), "notificaciones.id": req.params.notiId },
+      { mail: req.params.userId, "notificaciones.id": req.params.notiId },
       { $set: { "notificaciones.$.leido": true } },
       { returnDocument: "after" }
     );
