@@ -3,10 +3,13 @@ const router = express.Router();
 const crypto = require("crypto");
 const { ObjectId } = require('mongodb');
 const multer = require('multer');
-const { addNotification } = require("../utils/notificaciones.helper");
+const { addNotification} = require("../utils/notificaciones.helper");
+const {sendEmail} = require ("../utils/mail.helper"); // Importación del helper de correo
 const useragent = require('useragent');
 
 const TOKEN_EXPIRATION = 12 * 1000 * 60 * 60;
+// Constante para la expiración del código de recuperación (ej: 15 minutos)
+const RECOVERY_CODE_EXPIRATION = 15 * 60 * 1000; 
 
 // Configurar Multer para almacenar logos en memoria
 const upload = multer({
@@ -211,6 +214,140 @@ router.post("/login", async (req, res) => {
     return res.status(500).json({ error: "Error interno en login" });
   }
 });
+
+// =================================================================
+// 🔑 ENDPOINT 1: SOLICITAR RECUPERACIÓN (PASO 1)
+// =================================================================
+router.post("/recuperacion", async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ message: "El correo electrónico es obligatorio." });
+    }
+
+    try {
+        const user = await req.db.collection("usuarios").findOne({ 
+          mail: email.toLowerCase().trim()
+          // No validamos estado "activo" aquí para dar feedback si el email existe
+        });
+        
+        // 1. Simular éxito si el usuario no existe para prevenir enumeración,
+        // pero para debug y flujo explícito, retornamos 404/401 si no está activo.
+        if (!user || user.estado === "inactivo") {
+            return res.status(404).json({ message: "Usuario no encontrado o no activo." });
+        }
+
+        // 2. Generar código de 6 dígitos numéricos
+        // Aseguramos que tenga 6 dígitos, rellenando con ceros si es necesario, aunque
+        // crypto.randomInt(100000, 999999) ya garantiza 6 dígitos.
+        const verificationCode = crypto.randomInt(100000, 999999).toString();
+        const expiresAt = new Date(Date.now() + RECOVERY_CODE_EXPIRATION);
+
+        // 3. Invalidar códigos anteriores para este usuario/email (Limpieza)
+        await req.db.collection("recovery_codes").updateMany(
+            { email: email.toLowerCase().trim(), active: true },
+            { $set: { active: false, revokedAt: new Date(), reason: "new_code_issued" } }
+        );
+
+        // 4. Guardar el nuevo código en la colección temporal
+        await req.db.collection("recovery_codes").insertOne({
+            email: email.toLowerCase().trim(),
+            code: verificationCode,
+            userId: user._id.toString(), // Guardamos el ID por conveniencia
+            createdAt: new Date(),
+            expiresAt: expiresAt,
+            active: true
+        });
+
+        // 5. Enviar el email
+        const htmlContent = `
+            <p>Hola ${user.nombre},</p>
+            <p>Hemos recibido una solicitud para restablecer la contraseña de tu cuenta Acciona.</p>
+            <p>Tu código de verificación es:</p>
+            <h2 style="color: #f97316; font-size: 24px; text-align: center; border: 1px solid #f97316; padding: 10px; border-radius: 8px;">
+                ${verificationCode}
+            </h2>
+            <p>Este código expira en 15 minutos. Si no solicitaste este cambio, ignora este correo.</p>
+            <p>Saludos cordiales,</p>
+            <p>El equipo de Acciona</p>
+        `;
+
+        await sendEmail({
+            to: email,
+            subject: 'Código de Recuperación de Contraseña - Acciona',
+            html: htmlContent
+        });
+
+        // 6. Respuesta al cliente (status 200 para pasar al paso 2)
+        res.status(200).json({ success: true, message: "Código de recuperación enviado." });
+
+    } catch (err) {
+        console.error("Error en /recuperacion:", err);
+        // Error genérico si el envío falla o hay un error de DB
+        res.status(500).json({ message: "Error interno al procesar la solicitud." });
+    }
+});
+
+
+// =================================================================
+// 🔑 ENDPOINT 2: VERIFICAR CÓDIGO Y BORRAR PASS (PASO 2)
+// =================================================================
+router.post("/borrarpass", async (req, res) => {
+    const { email, code } = req.body;
+    const now = new Date();
+
+    if (!email || !code) {
+        return res.status(400).json({ message: "Correo y código de verificación son obligatorios." });
+    }
+
+    try {
+        // 1. Buscar código activo, sin expirar y que coincida con email/código
+        const recoveryRecord = await req.db.collection("recovery_codes").findOne({
+            email: email.toLowerCase().trim(),
+            code: code,
+            active: true
+        });
+
+        if (!recoveryRecord) {
+            return res.status(401).json({ message: "Código inválido o ya utilizado." });
+        }
+
+        // 2. Verificar expiración
+        if (recoveryRecord.expiresAt < now) {
+            // Marcar como inactivo si expiró
+            await req.db.collection("recovery_codes").updateOne(
+                { _id: recoveryRecord._id },
+                { $set: { active: false, revokedAt: now, reason: "expired" } }
+            );
+            return res.status(401).json({ message: "Código expirado. Solicita uno nuevo." });
+        }
+
+        // 3. Marcar el código como inactivo (consumido)
+        await req.db.collection("recovery_codes").updateOne(
+            { _id: recoveryRecord._id },
+            { $set: { active: false, revokedAt: now, reason: "consumed" } }
+        );
+
+        // 4. Obtener el ID del usuario
+        // Podemos usar el userId que guardamos en el recoveryRecord
+        const userId = recoveryRecord.userId;
+        
+        if (!userId) {
+             return res.status(404).json({ message: "Error interno: ID de usuario no encontrado." });
+        }
+
+        // Opcional: Borrar el campo pass temporalmente para forzar el cambio, o simplemente redirigir
+        // Dado que el flujo es redirigir a `/set-password?userId=<uid>`, no borraremos la pass aquí.
+
+        // 5. Retornar el UID del usuario (como string)
+        return res.json({ success: true, uid: userId });
+
+    } catch (err) {
+        console.error("Error en /borrarpass:", err);
+        res.status(500).json({ message: "Error interno al verificar el código." });
+    }
+});
+
 
 router.get("/logins/todos", async (req, res) => {
   try {
@@ -527,20 +664,27 @@ router.post("/set-password", async (req, res) => {
     }
 
     if (existingUser.estado !== "pendiente") {
-      return res.status(400).json({
-        error: "La contraseña ya fue establecida anteriormente. Si necesitas cambiarla, contacta al administrador."
-      });
+      // Permitimos que este endpoint sea usado para setear contraseña en un flujo de recuperación
+      // Si el usuario ya está activo, asumimos que este endpoint es para setear una nueva contraseña.
+      // Se podría añadir lógica para diferenciar si viene de recuperación (borrarpass) o de activación inicial (register).
+
+      // Si el flujo es solo para activación inicial, descomentar la línea de abajo y comentar la de arriba
+      // return res.status(400).json({
+      //   error: "La contraseña ya fue establecida. Si necesitas cambiarla, usa /change-password."
+      // });
     }
 
     const result = await req.db.collection("usuarios").updateOne(
       {
         _id: new ObjectId(userId),
-        estado: "pendiente"
+        // Si quieres que el set-password funcione para recuperación de un usuario ACTIVO
+        // debes quitar la condición 'estado: "pendiente"'.
+        // Lo dejaré sin la condición para que funcione como "reset" en la recuperación.
       },
       {
         $set: {
           pass: password,
-          estado: "activo",
+          estado: "activo", // Aseguramos que el estado pase a activo (si estaba en pendiente)
           updatedAt: new Date().toISOString()
         }
       }
@@ -548,7 +692,7 @@ router.post("/set-password", async (req, res) => {
 
     if (result.matchedCount === 0) {
       return res.status(400).json({
-        error: "No se puede establecer la contraseña. Ya fue configurada anteriormente o el enlace expiró."
+        error: "No se pudo actualizar la contraseña. El usuario no fue encontrado o el ID es incorrecto."
       });
     }
 
