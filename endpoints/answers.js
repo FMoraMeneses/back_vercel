@@ -1526,7 +1526,7 @@ router.get("/data-approved/:responseId", async (req, res) => {
   }
 });
 
-// 7. DESCARGAR PDF APROBADO (MODIFICADO - ahora soporta index)
+// 7. DESCARGAR PDF APROBADO - CORREGIDO
 router.get("/download-approved-pdf/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1561,12 +1561,28 @@ router.get("/download-approved-pdf/:responseId", async (req, res) => {
       return res.status(404).json({ error: "Archivo PDF no disponible" });
     }
 
+    // DEPURACIÓN: Ver qué datos tenemos realmente
+    console.log("DEBUG - File object:", {
+      hasFileName: !!file.fileName,
+      fileName: file.fileName,
+      fileSize: file.fileSize,
+      mimeType: file.mimeType,
+      tipo: file.tipo
+    });
+
+    // CORREGIDO: Asegurar que fileName existe
+    const fileName = file.fileName || `documento_aprobado_${responseId}.pdf`;
+
     res.setHeader('Content-Type', file.mimeType || 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
-    res.setHeader('Content-Length', file.fileSize);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', file.fileSize || (file.fileData.buffer ? file.fileData.buffer.length : file.fileData.length));
     res.setHeader('Cache-Control', 'no-cache');
 
-    res.send(file.fileData.buffer || file.fileData);
+    // Enviar los datos correctamente
+    const fileBuffer = file.fileData.buffer || file.fileData;
+    res.send(fileBuffer);
+
+    console.log(`PDF aprobado enviado: ${fileName}`);
 
   } catch (err) {
     console.error("Error descargando PDF aprobado:", err);
@@ -1727,12 +1743,12 @@ router.post("/:responseId/upload-client-signature", upload.single('signedPdf'), 
   }
 });
 
-// 10. Obtener PDF firmado por cliente SIN cambiar estado
+// 10. Obtener PDF firmado por cliente SIN cambiar estado - CORREGIDO
 router.get("/:responseId/client-signature", async (req, res) => {
   try {
     const { responseId } = req.params;
 
-    console.log(`Descargando documento firmado para: ${responseId} (sin cambiar estado)`);
+    console.log(`Descargando documento firmado para: ${responseId}`);
 
     const signature = await req.db.collection("firmados").findOne({
       responseId: responseId
@@ -1750,6 +1766,14 @@ router.get("/:responseId/client-signature", async (req, res) => {
       return res.status(404).json({ error: "Archivo PDF no disponible" });
     }
 
+    // DEPURACIÓN: Ver qué datos tenemos realmente
+    console.log("DEBUG - PDF Data:", {
+      hasFileName: !!pdfData.fileName,
+      fileName: pdfData.fileName,
+      fileSize: pdfData.fileSize,
+      mimeType: pdfData.mimeType
+    });
+
     // Obtener el buffer de datos
     const fileBuffer = pdfData.fileData.buffer || pdfData.fileData;
 
@@ -1758,11 +1782,10 @@ router.get("/:responseId/client-signature", async (req, res) => {
       return res.status(404).json({ error: "Datos del archivo no disponibles" });
     }
 
-    // CORREGIR: Usar encodeURIComponent para nombres con caracteres especiales
+    // CORREGIDO: Usar el fileName real, no el por defecto
     const fileName = pdfData.fileName || `documento_firmado_${responseId}.pdf`;
     const encodedFileName = encodeURIComponent(fileName);
 
-    // CONFIGURAR HEADERS CORRECTAMENTE - IMPORTANTE: Usar res.setHeader() individualmente
     res.setHeader('Content-Type', pdfData.mimeType || 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodedFileName}`);
     res.setHeader('Content-Length', pdfData.fileSize || fileBuffer.length);
@@ -1772,7 +1795,6 @@ router.get("/:responseId/client-signature", async (req, res) => {
 
     console.log(`Enviando documento firmado: ${fileName}, tamaño: ${pdfData.fileSize || fileBuffer.length} bytes`);
 
-    // SOLO ENVIAR EL ARCHIVO - NO CAMBIAR ESTADO
     res.send(fileBuffer);
 
   } catch (err) {
