@@ -22,6 +22,8 @@ const normalizeFilename = (filename) => {
     nameWithoutExt = filename.substring(0, lastDotIndex);
   }
 
+  //xd
+
   if (extension) {
     extension = extension
       .replace(/[^a-zA-Z0-9]/g, '')
