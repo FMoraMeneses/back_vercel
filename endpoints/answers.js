@@ -216,6 +216,7 @@ router.post("/", async (req, res) => {
   }
 });
 
+// el admin puede hacer una inyección de respuesta en nombre de otro usuario
 router.post("/admin", async (req, res) => {
   try {
     const {
@@ -372,7 +373,7 @@ router.post("/admin", async (req, res) => {
   }
 });
 
-// Obtener adjuntos de una respuesta específica
+// Obtener adjuntos de una respuesta específica, sirve para los requestdetails del frontend
 router.get("/:id/adjuntos", async (req, res) => {
   try {
     const { id } = req.params;
@@ -466,6 +467,7 @@ router.post("/:id/adjuntos", async (req, res) => {
   }
 });
 
+// Descargar adjunto específico
 router.get("/:id/adjuntos/:index", async (req, res) => {
   try {
     const { id, index } = req.params;
@@ -521,6 +523,7 @@ router.get("/:id/adjuntos/:index", async (req, res) => {
   }
 });
 
+// Obtener todas las respuestas y su contenido
 router.get("/", async (req, res) => {
   try {
     const answers = await req.db.collection("respuestas").find().toArray();
@@ -530,6 +533,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Obtener respuestas por email logeado
 router.get("/mail/:mail", async (req, res) => {
   try {
     const answers = await req.db
@@ -586,6 +590,7 @@ router.get("/mail/:mail", async (req, res) => {
   }
 });
 
+// Obtener respuestas en formato mini para listado optimizado en la vista Admin respuestas
 router.get("/mini", async (req, res) => {
   try {
     const answers = await req.db.collection("respuestas")
@@ -649,6 +654,7 @@ router.get("/mini", async (req, res) => {
   }
 });
 
+// Obtener respuesta por ID
 router.get("/:id", async (req, res) => {
   try {
     const form = await req.db.collection("respuestas")
@@ -663,24 +669,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.get("/section/:section", async (req, res) => {
-  try {
-    const forms = await req.db
-      .collection("respuestas")
-      .find({ section: req.params.section })
-      .toArray();
-
-    if (!forms.length)
-      return res.status(404).json({ error: "No se encontraron formularios en esta sección" });
-
-    res.status(200).json(forms);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al obtener formularios por sección" });
-  }
-});
-
-//actualizar respuesta
+//actualizar respuesta (no se está usando)
 router.put("/:id", async (req, res) => {
   try {
     const result = await req.db.collection("respuestas").findOneAndUpdate(
@@ -693,30 +682,6 @@ router.put("/:id", async (req, res) => {
     res.json(result.value);
   } catch (err) {
     res.status(500).json({ error: "Error al actualizar formulario" });
-  }
-});
-
-//publicar formulario
-router.put("/public/:id", async (req, res) => {
-  try {
-    const result = await req.db.collection("respuestas").findOneAndUpdate(
-      { _id: new ObjectId(req.params.id) },
-      {
-        $set: {
-          status: "publicado",
-          updatedAt: new Date()
-        }
-      },
-      { returnDocument: "after" }
-    );
-
-    if (!result.value)
-      return res.status(404).json({ error: "Formulario no encontrado" });
-
-    res.status(200).json(result.value);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al publicar formulario" });
   }
 });
 
@@ -764,7 +729,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-//solicitar de mensajes
+//obtener chat completo (admin)
 router.get("/:formId/chat/admin", async (req, res) => {
   try {
     const { formId } = req.params;
@@ -791,6 +756,7 @@ router.get("/:formId/chat/admin", async (req, res) => {
   }
 });
 
+//obtener chat completo (cliente)
 router.get("/:formId/chat/", async (req, res) => {
   try {
     const { formId } = req.params;
@@ -822,7 +788,7 @@ router.get("/:formId/chat/", async (req, res) => {
   }
 });
 
-//enviar mensaje
+//enviar mensaje al chat
 router.post("/chat", async (req, res) => {
   try {
     const { formId, autor, mensaje, admin } = req.body;
@@ -895,6 +861,7 @@ router.post("/chat", async (req, res) => {
   }
 });
 
+//marcar todos los mensajes como leídos
 router.put("/chat/marcar-leidos", async (req, res) => {
   try {
     const result = await req.db.collection("respuestas").updateMany(
@@ -966,6 +933,7 @@ router.post("/:id/upload-correction", upload.single('correctedFile'), async (req
   }
 });
 
+// Cambiar estado a 'finalizado'
 router.get("/:id/finalized", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1013,6 +981,7 @@ router.get("/:id/finalized", async (req, res) => {
   }
 });
 
+// Cambiar estado a 'archivado'
 router.get("/:id/archived", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1480,7 +1449,7 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
-// 6. OBTENER DATOS DE ARCHIVOS APROBADOS (MODIFICADO)
+// 6. OBTENER DATOS DE ARCHIVOS APROBADOS
 router.get("/data-approved/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1528,7 +1497,7 @@ router.get("/data-approved/:responseId", async (req, res) => {
   }
 });
 
-// 7. DESCARGAR PDF APROBADO - CORREGIDO
+// 7. DESCARGAR PDF APROBADO
 router.get("/download-approved-pdf/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1592,7 +1561,7 @@ router.get("/download-approved-pdf/:responseId", async (req, res) => {
   }
 });
 
-// 8. ELIMINAR CORRECCIÓN (MODIFICADO)
+// 8. ELIMINAR CORRECCIÓN
 router.delete("/:id/remove-correction", async (req, res) => {
   try {
     const responseId = req.params.id;
@@ -1745,7 +1714,7 @@ router.post("/:responseId/upload-client-signature", upload.single('signedPdf'), 
   }
 });
 
-// 10. Obtener PDF firmado por cliente SIN cambiar estado - CORREGIDO
+// 10. Obtener PDF firmado por cliente SIN cambiar estado
 router.get("/:responseId/client-signature", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1784,7 +1753,7 @@ router.get("/:responseId/client-signature", async (req, res) => {
       return res.status(404).json({ error: "Datos del archivo no disponibles" });
     }
 
-    // CORREGIDO: Usar el fileName real, no el por defecto
+    // Usar el fileName real, no el por defecto
     const fileName = pdfData.fileName || `documento_firmado_${responseId}.pdf`;
     const encodedFileName = encodeURIComponent(fileName);
 
