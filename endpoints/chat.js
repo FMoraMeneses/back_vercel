@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { ObjectId } = require('mongodb');
-const { addNotification } = require("../../utils/notificaciones.helper");
+const { addNotification } = require("../utils/notificaciones.helper");
 
 module.exports = (db) => {
   
