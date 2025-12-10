@@ -729,6 +729,156 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+//obtener chat completo (admin)
+router.get("/:formId/chat/admin", async (req, res) => {
+  try {
+    const { formId } = req.params;
+
+    let query;
+    if (ObjectId.isValid(formId)) {
+      query = { $or: [{ _id: new ObjectId(formId) }, { formId }] };
+    } else {
+      query = { formId };
+    }
+
+    const respuesta = await req.db
+      .collection("respuestas")
+      .findOne(query, { projection: { mensajes: 1 } });
+
+    if (!respuesta) {
+      return res.status(404).json({ error: "No se encontró la respuesta con ese formId o _id" });
+    }
+
+    res.json(respuesta.mensajes || []);
+  } catch (err) {
+    console.error("Error obteniendo chat:", err);
+    res.status(500).json({ error: "Error al obtener chat" });
+  }
+});
+
+//obtener chat completo (cliente)
+router.get("/:formId/chat/", async (req, res) => {
+  try {
+    const { formId } = req.params;
+
+    let query;
+    if (ObjectId.isValid(formId)) {
+      query = { $or: [{ _id: new ObjectId(formId) }, { formId }] };
+    } else {
+      query = { formId };
+    }
+
+    const respuesta = await req.db
+      .collection("respuestas")
+      .findOne(query, { projection: { mensajes: 1 } });
+
+    if (!respuesta) {
+      return res.status(404).json({ error: "No se encontró la respuesta con ese formId o _id" });
+    }
+
+    const todosLosMensajes = respuesta.mensajes || [];
+
+    const mensajesGenerales = todosLosMensajes.filter(msg => !msg.admin);
+
+    res.json(mensajesGenerales);
+
+  } catch (err) {
+    console.error("Error obteniendo chat general:", err);
+    res.status(500).json({ error: "Error al obtener chat general" });
+  }
+});
+
+//enviar mensaje al chat
+router.post("/chat", async (req, res) => {
+  try {
+    const { formId, autor, mensaje, admin } = req.body;
+
+    if (!autor || !mensaje || !formId) {
+      return res.status(400).json({ error: "Faltan campos: formId, autor o mensaje" });
+    }
+
+    const nuevoMensaje = {
+      autor,
+      mensaje,
+      leido: false,
+      fecha: new Date(),
+      admin: admin || false
+    };
+
+    let query;
+    if (ObjectId.isValid(formId)) {
+      query = { $or: [{ _id: new ObjectId(formId) }, { formId }] };
+    } else {
+      query = { formId };
+    }
+
+    const respuesta = await req.db.collection("respuestas").findOne(query);
+    if (!respuesta) {
+      return res.status(404).json({ error: "No se encontró la respuesta para agregar el mensaje" });
+    }
+
+    await req.db.collection("respuestas").updateOne(
+      { _id: respuesta._id },
+      { $push: { mensajes: nuevoMensaje } }
+    );
+
+    if (respuesta?.user?.nombre === autor) {
+      await addNotification(req.db, {
+        filtro: { cargo: "RRHH" },
+        titulo: "Nuevo mensaje en tu formulario",
+        descripcion: `${autor} le ha enviado un mensaje respecto a un formulario.`,
+        icono: "Edit",
+        color: "#45577eff",
+        actionUrl: `/RespuestasForms?id=${respuesta._id}`,
+      });
+
+      await addNotification(req.db, {
+        filtro: { cargo: "admin" },
+        titulo: "Nuevo mensaje en tu formulario",
+        descripcion: `${autor} le ha enviado un mensaje respecto a un formulario.`,
+        icono: "Edit",
+        color: "#45577eff",
+        actionUrl: `/RespuestasForms?id=${respuesta._id}`,
+      });
+    } else {
+      await addNotification(req.db, {
+        userId: respuesta.user.uid,
+        titulo: "Nuevo mensaje recibido",
+        descripcion: `${autor} le ha enviado un mensaje respecto a un formulario.`,
+        icono: "MessageCircle",
+        color: "#45577eff",
+        actionUrl: `/?id=${respuesta._id}`,
+      });
+    }
+
+    res.json({
+      message: "Mensaje agregado correctamente y notificación enviada",
+      data: nuevoMensaje,
+    });
+  } catch (err) {
+    console.error("Error al agregar mensaje:", err);
+    res.status(500).json({ error: "Error al agregar mensaje" });
+  }
+});
+
+//marcar todos los mensajes como leídos
+router.put("/chat/marcar-leidos", async (req, res) => {
+  try {
+    const result = await req.db.collection("respuestas").updateMany(
+      { "mensajes.leido": false },
+      { $set: { "mensajes.$[].leido": true } }
+    );
+
+    res.json({
+      message: "Todos los mensajes fueron marcados como leídos",
+      result,
+    });
+  } catch (err) {
+    console.error("Error al marcar mensajes como leídos:", err);
+    res.status(500).json({ error: "Error al marcar mensajes como leídos" });
+  }
+});
+
 // Subir corrección PDF (se mantiene por compatibilidad)
 router.post("/:id/upload-correction", upload.single('correctedFile'), async (req, res) => {
   try {
