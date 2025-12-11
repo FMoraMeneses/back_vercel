@@ -1,13 +1,32 @@
-// back_vercel2/endpoints/anuncios.js
+// back_vercel2/endpoints/anuncios.js - VERSIÓN CORREGIDA CON DEBUG
+
 const express = require('express');
 const router = express.Router();
 const { ObjectId } = require('mongodb');
 const { addNotification } = require('../utils/notificaciones.helper');
 
+// Middleware de debug para todas las rutas
+router.use((req, res, next) => {
+  console.log(`📨 [ANUNCIOS] ${req.method} ${req.path}`);
+  console.log('🔧 Headers:', req.headers);
+  next();
+});
+
 // POST /api/anuncios - Crear y enviar anuncio
 router.post('/', async (req, res) => {
+  console.log('📤 POST /api/anuncios - Body recibido:', req.body);
+  
   try {
     const db = req.db;
+    
+    if (!db) {
+      console.error('❌ No hay conexión a la base de datos');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error de conexión a la base de datos' 
+      });
+    }
+
     const {
       titulo,
       descripcion,
@@ -15,11 +34,12 @@ router.post('/', async (req, res) => {
       color = '#f5872dff',
       icono = 'paper',
       actionUrl = null,
-      destinatarios // { tipo: 'todos'|'filtro'|'manual', filtro: {empresas: [], cargos: [], roles: []}, usuariosManuales: [] }
+      destinatarios
     } = req.body;
 
     // Validaciones básicas
     if (!titulo || !descripcion) {
+      console.log('❌ Validación fallida: título o descripción faltante');
       return res.status(400).json({ 
         success: false, 
         error: 'Título y descripción son requeridos' 
@@ -27,20 +47,24 @@ router.post('/', async (req, res) => {
     }
 
     if (!destinatarios || !destinatarios.tipo) {
+      console.log('❌ Validación fallida: destinatarios faltante');
       return res.status(400).json({ 
         success: false, 
         error: 'Debe especificar destinatarios' 
       });
     }
 
+    console.log('✅ Validaciones pasadas, procesando destinatarios tipo:', destinatarios.tipo);
+
     let resultadoEnvio;
     const fechaEnvio = new Date();
 
     // ENVIAR SEGÚN TIPO DE DESTINATARIOS
     if (destinatarios.tipo === 'todos') {
-      // ENVIAR A TODOS LOS USUARIOS ACTIVOS
+      console.log('📨 Enviando a TODOS los usuarios activos');
+      
       resultadoEnvio = await addNotification(db, {
-        filtro: { estado: 'activo' }, // Esto enviará a TODOS los usuarios activos
+        filtro: { estado: 'activo' },
         titulo,
         descripcion,
         prioridad,
@@ -49,12 +73,14 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
+      console.log('✅ Notificación enviada a todos:', resultadoEnvio);
+
     } else if (destinatarios.tipo === 'filtro') {
-      // ENVIAR POR FILTROS (empresa, cargo, rol)
+      console.log('📨 Enviando por FILTROS:', destinatarios.filtro);
+      
       const filtro = destinatarios.filtro || {};
       const condicionesFiltro = { estado: 'activo' };
       
-      // Construir filtro combinado con OR (cumpla al menos un filtro)
       const orConditions = [];
       
       if (filtro.empresas && filtro.empresas.length > 0) {
@@ -69,15 +95,11 @@ router.post('/', async (req, res) => {
         orConditions.push({ rol: { $in: filtro.roles } });
       }
       
-      // Si hay condiciones OR, añadirlas
       if (orConditions.length > 0) {
         condicionesFiltro.$or = orConditions;
       }
       
-      // Si no hay filtros seleccionados, enviar a todos
-      if (orConditions.length === 0) {
-        condicionesFiltro.estado = 'activo'; // Enviar a todos los activos
-      }
+      console.log('🔍 Filtro construido:', condicionesFiltro);
 
       resultadoEnvio = await addNotification(db, {
         filtro: condicionesFiltro,
@@ -89,8 +111,11 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
+      console.log('✅ Notificación enviada por filtro:', resultadoEnvio);
+
     } else if (destinatarios.tipo === 'manual') {
-      // ENVIAR A USUARIOS ESPECÍFICOS
+      console.log('📨 Enviando a usuarios MANUALES:', destinatarios.usuariosManuales);
+      
       if (!destinatarios.usuariosManuales || destinatarios.usuariosManuales.length === 0) {
         return res.status(400).json({ 
           success: false, 
@@ -102,9 +127,10 @@ router.post('/', async (req, res) => {
       let totalErrores = 0;
       const erroresDetalle = [];
 
-      // Enviar a cada usuario individualmente
       for (const userId of destinatarios.usuariosManuales) {
         try {
+          console.log(`  📤 Enviando a usuario: ${userId}`);
+          
           await addNotification(db, {
             userId: userId,
             titulo,
@@ -114,14 +140,17 @@ router.post('/', async (req, res) => {
             icono,
             actionUrl
           });
+          
           totalEnviados++;
+          console.log(`  ✅ Enviado a ${userId}`);
+          
         } catch (error) {
           totalErrores++;
           erroresDetalle.push({
             userId,
             error: error.message
           });
-          console.error(`Error al enviar a usuario ${userId}:`, error);
+          console.error(`❌ Error al enviar a ${userId}:`, error);
         }
       }
 
@@ -131,14 +160,17 @@ router.post('/', async (req, res) => {
         erroresDetalle
       };
 
+      console.log(`✅ Total manual: ${totalEnviados} enviados, ${totalErrores} errores`);
+
     } else {
+      console.log('❌ Tipo de destinatario no válido:', destinatarios.tipo);
       return res.status(400).json({ 
         success: false, 
         error: 'Tipo de destinatario no válido' 
       });
     }
 
-    // GUARDAR REGISTRO DEL ANUNCIO (opcional, para historial)
+    // GUARDAR REGISTRO DEL ANUNCIO
     const anuncioRegistro = {
       titulo,
       descripcion,
@@ -148,7 +180,7 @@ router.post('/', async (req, res) => {
       actionUrl,
       destinatarios,
       fechaEnvio,
-      enviadoPor: req.userEmail || 'Sistema', // Ajusta según tu autenticación
+      enviadoPor: req.userEmail || req.user?.mail || 'Sistema',
       resultado: {
         modificados: resultadoEnvio.modifiedCount || 0,
         errores: resultadoEnvio.errores || 0,
@@ -156,23 +188,88 @@ router.post('/', async (req, res) => {
       }
     };
 
-    await db.collection('anuncios').insertOne(anuncioRegistro);
+    console.log('💾 Guardando registro en BD:', anuncioRegistro);
+    
+    const insertResult = await db.collection('anuncios').insertOne(anuncioRegistro);
+    console.log('💾 Registro guardado con ID:', insertResult.insertedId);
 
     // RESPONDER AL FRONTEND
-    res.json({
+    const respuesta = {
       success: true,
       message: `Anuncio enviado exitosamente a ${resultadoEnvio.modifiedCount || 0} usuario(s)`,
       data: {
-        id: anuncioRegistro._id,
+        id: insertResult.insertedId,
         titulo,
         fechaEnvio,
         destinatariosEnviados: resultadoEnvio.modifiedCount || 0,
         errores: resultadoEnvio.errores || 0
       }
-    });
+    };
+
+    console.log('📤 Enviando respuesta al frontend:', respuesta);
+    res.json(respuesta);
 
   } catch (error) {
-    console.error('❌ Error al enviar anuncio:', error);
+    console.error('❌ ERROR CRÍTICO en POST /api/anuncios:', error);
+    console.error('Stack trace:', error.stack);
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor',
+      detalle: error.message 
+    });
+  }
+});
+
+// GET /api/anuncios - Listar anuncios enviados
+router.get('/', async (req, res) => {
+  console.log('📥 GET /api/anuncios - Obteniendo historial');
+  
+  try {
+    const db = req.db;
+    
+    if (!db) {
+      console.error('❌ No hay conexión a la base de datos');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error de conexión a la base de datos' 
+      });
+    }
+
+    const anuncios = await db.collection('anuncios')
+      .find({})
+      .sort({ fechaEnvio: -1 })
+      .limit(100)
+      .toArray();
+
+    console.log(`📊 Encontrados ${anuncios.length} anuncios`);
+    
+    const respuesta = {
+      success: true,
+      data: anuncios.map(anuncio => ({
+        _id: anuncio._id,
+        titulo: anuncio.titulo,
+        descripcion: anuncio.descripcion,
+        prioridad: anuncio.prioridad,
+        color: anuncio.color,
+        icono: anuncio.icono,
+        fechaEnvio: anuncio.fechaEnvio,
+        destinatariosTipo: anuncio.destinatarios?.tipo,
+        resultado: anuncio.resultado,
+        enviadoPor: anuncio.enviadoPor
+      }))
+    };
+
+    console.log('📤 Enviando respuesta GET:', { 
+      cantidad: respuesta.data.length,
+      primerosTitulos: respuesta.data.slice(0, 3).map(a => a.titulo)
+    });
+    
+    res.json(respuesta);
+    
+  } catch (error) {
+    console.error('❌ ERROR en GET /api/anuncios:', error);
+    
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -180,43 +277,14 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/anuncios - Listar anuncios enviados (historial)
-router.get('/', async (req, res) => {
-  try {
-    const db = req.db;
-    
-    const anuncios = await db.collection('anuncios')
-      .find({})
-      .sort({ fechaEnvio: -1 })
-      .limit(100) // Limitar para no sobrecargar
-      .toArray();
-    
-    // Formatear respuesta
-    const anunciosFormateados = anuncios.map(anuncio => ({
-      _id: anuncio._id,
-      titulo: anuncio.titulo,
-      descripcion: anuncio.descripcion,
-      prioridad: anuncio.prioridad,
-      color: anuncio.color,
-      icono: anuncio.icono,
-      fechaEnvio: anuncio.fechaEnvio,
-      destinatariosTipo: anuncio.destinatarios?.tipo,
-      resultado: anuncio.resultado,
-      enviadoPor: anuncio.enviadoPor
-    }));
-    
-    res.json({
-      success: true,
-      data: anunciosFormateados
-    });
-    
-  } catch (error) {
-    console.error('Error al obtener anuncios:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
+// Ruta de prueba simple
+router.get('/test', (req, res) => {
+  console.log('✅ GET /api/anuncios/test - Prueba de conexión');
+  res.json({ 
+    success: true, 
+    message: 'Endpoint de anuncios funcionando',
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;
