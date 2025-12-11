@@ -60,7 +60,7 @@ app.use("/api/generador", gen);
 app.use("/api/noti", noti);
 app.use("/api/menu", menu);
 app.use("/api/plantillas", plantillas);
-app.use('/api/anuncios', anunciosRouter);
+app.use("/api/anuncios", anunciosRouter);
 
 // Ruta base
 app.get("/", (req, res) => {
