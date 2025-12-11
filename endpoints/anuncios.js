@@ -1,18 +1,9 @@
-// back_vercel2/endpoints/anuncios.js - VERSIÓN CORREGIDA CON DEBUG
-
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { ObjectId } = require('mongodb');
-const { addNotification } = require('../utils/notificaciones.helper');
+const { ObjectId } = require("mongodb");
+const { addNotification } = require("../utils/notificaciones.helper");
 
-// Middleware de debug para todas las rutas
-router.use((req, res, next) => {
-  console.log(`📨 [ANUNCIOS] ${req.method} ${req.path}`);
-  console.log('🔧 Headers:', req.headers);
-  next();
-});
-
-// POST /api/anuncios - Crear y enviar anuncio
+// Nuevo endpoint para obtener información del documento por responseId
 router.post('/', async (req, res) => {
   console.log('📤 POST /api/anuncios - Body recibido:', req.body);
   
