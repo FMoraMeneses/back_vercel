@@ -11,7 +11,7 @@ const gen = require("./endpoints/Generador");
 const noti = require("./endpoints/notificaciones");
 const menu = require("./endpoints/web");
 const plantillas = require("./endpoints/plantillas");
-const anunciosRouter = require("./endpoints/anuncios");
+const anunciosRouter = require("./endpoints/anuncios2");
 const app = express();
 
 app.use(express.json({ limit: '4mb' }));
