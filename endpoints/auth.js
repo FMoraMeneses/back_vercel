@@ -547,7 +547,7 @@ router.post("/verify-2fa-activation", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
 
   // Asumimos que obtienes el ID del usuario del token
-  const userId = req.body.userId || 'ID_DEL_TOKEN'; // Obtener ID real del token decodificado
+  const userId = req.body.email || 'ID_DEL_TOKEN'; // Obtener ID real del token decodificado
 
   if (!verificationCode || verificationCode.length !== 6 || !userId) {
     return res.status(400).json({ success: false, message: "Datos incompletos o código inválido." });
