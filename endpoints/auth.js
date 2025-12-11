@@ -822,6 +822,13 @@ router.put("/users/:id", async (req, res) => {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
 
+    // Revocar tokens activos si el usuario fue modificado
+    ahora = new Date();
+    await db.collection("tokens").updateOne(
+      { email: mail.toLowerCase().trim(), active: true },
+      { $set: { active: false, revokedAt: ahora } }
+    );
+
     res.json({
       success: true,
       message: "Usuario actualizado exitosamente",
