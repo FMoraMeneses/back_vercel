@@ -201,7 +201,7 @@ const enviarCorreoRespaldo = async (correoRespaldo, formTitle, usuario, response
       html: contenido.html
     };
 
-    const mailResponse = await fetch('https://back-vercel-iota.vercel.app/api/mail/send', {
+    const mailResponse = await fetch('https://back-acciona.vercel.app/api/mail/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(mailPayload),

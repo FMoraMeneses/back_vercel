@@ -11,7 +11,6 @@ const gen = require("./endpoints/Generador");
 const noti = require("./endpoints/notificaciones");
 const menu = require("./endpoints/web");
 const plantillas = require("./endpoints/plantillas");
-const chatRoutes = require("./endpoints/chat");
 const app = express();
 
 app.use(express.json({ limit: '4mb' }));
@@ -60,7 +59,6 @@ app.use("/api/generador", gen);
 app.use("/api/noti", noti);
 app.use("/api/menu", menu);
 app.use("/api/plantillas", plantillas);
-app.use("/api/chat", chatRoutes);
 
 // Ruta base
 app.get("/", (req, res) => {
