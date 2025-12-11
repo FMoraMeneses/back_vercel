@@ -824,7 +824,7 @@ router.put("/users/:id", async (req, res) => {
 
     // Revocar tokens activos si el usuario fue modificado
     ahora = new Date();
-    await db.collection("tokens").updateOne(
+    await req.db.collection("tokens").updateOne(
       { email: mail.toLowerCase().trim(), active: true },
       { $set: { active: false, revokedAt: ahora } }
     );
