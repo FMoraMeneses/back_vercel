@@ -10,7 +10,7 @@ router.post("/", async (req, res) => {
   try {
     const data = req.body;
 
-    // ✅ PROCESAR PREGUNTAS para asegurar configuraciones de archivos
+    // PROCESAR PREGUNTAS para asegurar configuraciones de archivos
     const processedQuestions = (data.questions || []).map(question => {
       if (question.type === 'file') {
         return {

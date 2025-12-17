@@ -208,15 +208,15 @@ const enviarCorreoRespaldo = async (correoRespaldo, formTitle, usuario, response
     });
 
     if (mailResponse.ok) {
-      console.log(`✅ Correo de respaldo enviado a: ${correoRespaldo}`);
+      console.log(`Correo de respaldo enviado a: ${correoRespaldo}`);
       return { enviado: true };
     } else {
       const errorData = await mailResponse.json();
-      console.warn(`❌ No se pudo enviar correo de respaldo a: ${correoRespaldo}`, errorData);
+      console.warn(`No se pudo enviar correo de respaldo a: ${correoRespaldo}`, errorData);
       return { enviado: false, motivo: errorData.error };
     }
   } catch (error) {
-    console.error('❌ Error enviando correo de respaldo:', error);
+    console.error('Error enviando correo de respaldo:', error);
     return { enviado: false, motivo: error.message };
   }
 };

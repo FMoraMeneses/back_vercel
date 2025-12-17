@@ -5,13 +5,13 @@ const { addNotification } = require("../utils/notificaciones.helper");
 
 // Nuevo endpoint para obtener información del documento por responseId
 router.post('/', async (req, res) => {
-  console.log('📤 POST /api/anuncios - Body recibido:', req.body);
+  console.log('POST /api/anuncios - Body recibido:', req.body);
   
   try {
     const db = req.db;
     
     if (!db) {
-      console.error('❌ No hay conexión a la base de datos');
+      console.error('No hay conexión a la base de datos');
       return res.status(500).json({ 
         success: false, 
         error: 'Error de conexión a la base de datos' 
@@ -30,7 +30,7 @@ router.post('/', async (req, res) => {
 
     // Validaciones básicas
     if (!titulo || !descripcion) {
-      console.log('❌ Validación fallida: título o descripción faltante');
+      console.log('Validación fallida: título o descripción faltante');
       return res.status(400).json({ 
         success: false, 
         error: 'Título y descripción son requeridos' 
@@ -38,14 +38,14 @@ router.post('/', async (req, res) => {
     }
 
     if (!destinatarios || !destinatarios.tipo) {
-      console.log('❌ Validación fallida: destinatarios faltante');
+      console.log('Validación fallida: destinatarios faltante');
       return res.status(400).json({ 
         success: false, 
         error: 'Debe especificar destinatarios' 
       });
     }
 
-    console.log('✅ Validaciones pasadas, procesando destinatarios tipo:', destinatarios.tipo);
+    console.log('Validaciones pasadas, procesando destinatarios tipo:', destinatarios.tipo);
 
     let resultadoEnvio;
     const fechaEnvio = new Date();
@@ -64,7 +64,7 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
-      console.log('✅ Notificación enviada a todos:', resultadoEnvio);
+      console.log('Notificación enviada a todos:', resultadoEnvio);
 
     } else if (destinatarios.tipo === 'filtro') {
       console.log('📨 Enviando por FILTROS:', destinatarios.filtro);
@@ -102,10 +102,10 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
-      console.log('✅ Notificación enviada por filtro:', resultadoEnvio);
+      console.log('Notificación enviada por filtro:', resultadoEnvio);
 
     } else if (destinatarios.tipo === 'manual') {
-      console.log('📨 Enviando a usuarios MANUALES:', destinatarios.usuariosManuales);
+      console.log('Enviando a usuarios MANUALES:', destinatarios.usuariosManuales);
       
       if (!destinatarios.usuariosManuales || destinatarios.usuariosManuales.length === 0) {
         return res.status(400).json({ 
@@ -120,7 +120,7 @@ router.post('/', async (req, res) => {
 
       for (const userId of destinatarios.usuariosManuales) {
         try {
-          console.log(`  📤 Enviando a usuario: ${userId}`);
+          console.log(`Enviando a usuario: ${userId}`);
           
           await addNotification(db, {
             userId: userId,
@@ -133,7 +133,7 @@ router.post('/', async (req, res) => {
           });
           
           totalEnviados++;
-          console.log(`  ✅ Enviado a ${userId}`);
+          console.log(`Enviado a ${userId}`);
           
         } catch (error) {
           totalErrores++;
@@ -141,7 +141,7 @@ router.post('/', async (req, res) => {
             userId,
             error: error.message
           });
-          console.error(`❌ Error al enviar a ${userId}:`, error);
+          console.error(`Error al enviar a ${userId}:`, error);
         }
       }
 
@@ -151,10 +151,10 @@ router.post('/', async (req, res) => {
         erroresDetalle
       };
 
-      console.log(`✅ Total manual: ${totalEnviados} enviados, ${totalErrores} errores`);
+      console.log(`Total manual: ${totalEnviados} enviados, ${totalErrores} errores`);
 
     } else {
-      console.log('❌ Tipo de destinatario no válido:', destinatarios.tipo);
+      console.log('Tipo de destinatario no válido:', destinatarios.tipo);
       return res.status(400).json({ 
         success: false, 
         error: 'Tipo de destinatario no válido' 
@@ -179,10 +179,10 @@ router.post('/', async (req, res) => {
       }
     };
 
-    console.log('💾 Guardando registro en BD:', anuncioRegistro);
+    console.log('Guardando registro en BD:', anuncioRegistro);
     
     const insertResult = await db.collection('anuncios').insertOne(anuncioRegistro);
-    console.log('💾 Registro guardado con ID:', insertResult.insertedId);
+    console.log('Registro guardado con ID:', insertResult.insertedId);
 
     // RESPONDER AL FRONTEND
     const respuesta = {
@@ -197,11 +197,11 @@ router.post('/', async (req, res) => {
       }
     };
 
-    console.log('📤 Enviando respuesta al frontend:', respuesta);
+    console.log('Enviando respuesta al frontend:', respuesta);
     res.json(respuesta);
 
   } catch (error) {
-    console.error('❌ ERROR CRÍTICO en POST /api/anuncios:', error);
+    console.error('ERROR CRÍTICO en POST /api/anuncios:', error);
     console.error('Stack trace:', error.stack);
     
     res.status(500).json({ 
@@ -214,13 +214,13 @@ router.post('/', async (req, res) => {
 
 // GET /api/anuncios - Listar anuncios enviados
 router.get('/', async (req, res) => {
-  console.log('📥 GET /api/anuncios - Obteniendo historial');
+  console.log('GET /api/anuncios - Obteniendo historial');
   
   try {
     const db = req.db;
     
     if (!db) {
-      console.error('❌ No hay conexión a la base de datos');
+      console.error('No hay conexión a la base de datos');
       return res.status(500).json({ 
         success: false, 
         error: 'Error de conexión a la base de datos' 
@@ -251,7 +251,7 @@ router.get('/', async (req, res) => {
       }))
     };
 
-    console.log('📤 Enviando respuesta GET:', { 
+    console.log('Enviando respuesta GET:', { 
       cantidad: respuesta.data.length,
       primerosTitulos: respuesta.data.slice(0, 3).map(a => a.titulo)
     });
@@ -259,7 +259,7 @@ router.get('/', async (req, res) => {
     res.json(respuesta);
     
   } catch (error) {
-    console.error('❌ ERROR en GET /api/anuncios:', error);
+    console.error('ERROR en GET /api/anuncios:', error);
     
     res.status(500).json({ 
       success: false, 
@@ -270,7 +270,7 @@ router.get('/', async (req, res) => {
 
 // Ruta de prueba simple
 router.get('/test', (req, res) => {
-  console.log('✅ GET /api/anuncios/test - Prueba de conexión');
+  console.log('GET /api/anuncios/test - Prueba de conexión');
   res.json({ 
     success: true, 
     message: 'Endpoint de anuncios funcionando',

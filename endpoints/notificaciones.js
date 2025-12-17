@@ -35,7 +35,7 @@ router.post("/", async (req, res) => {
       usuarios_afectados: modifiedCount,
     });
   } catch (err) {
-    console.error("❌ Error al crear notificación:", err);
+    console.error("Error al crear notificación:", err);
     res.status(500).json({ error: "Error al crear notificación", detalles: err.message });
   }
 });
@@ -98,7 +98,7 @@ router.delete("/:mail", async (req, res) => {
   try {
     const result = await req.db.collection("usuarios").findOneAndUpdate(
       { mail: req.params.mail },
-      { $set: { notificaciones: [] } }, // ✅ Vacía el array completo
+      { $set: { notificaciones: [] } }, // Vacía el array completo
       { returnDocument: "after" }
     );
 

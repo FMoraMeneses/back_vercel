@@ -217,7 +217,7 @@ router.post("/login", async (req, res) => {
     }
 
     // ----------------------------------------------------------------
-    // 🚀 LÓGICA DE TOKEN (Solo si 2FA NO está activa)
+    // LÓGICA DE TOKEN (Solo si 2FA NO está activa)
     // ----------------------------------------------------------------
 
     const now = new Date();
@@ -870,7 +870,7 @@ router.post("/set-password", async (req, res) => {
       return res.status(400).json({ error: "UserId y contraseña son requeridos" });
     }
 
-    // ✅ NUEVA VALIDACIÓN DE CONTRASEÑA EN BACKEND
+    // NUEVA VALIDACIÓN DE CONTRASEÑA EN BACKEND
     if (password.length < 8) {
       return res.status(400).json({
         error: "La contraseña debe tener al menos 8 caracteres"
