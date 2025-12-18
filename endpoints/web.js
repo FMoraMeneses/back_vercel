@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { validarToken } = require('../utils/validarToken');
-const { createBlindIndex } = require("../utils/seguridad.helper");
+const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
 router.post("/filter", async (req, res) => {
   try {
@@ -11,7 +11,7 @@ router.post("/filter", async (req, res) => {
       return res.status(400).json({ error: "Faltan parámetros de autenticación (mail y token)." });
     }
 
-    const cleanMail = mail.toLowerCase().trim();
+    const cleanMail = decrypt(mail).toLowerCase().trim();
 
     // =========================================================
     // --- PASO 1: Validar el Token ---
