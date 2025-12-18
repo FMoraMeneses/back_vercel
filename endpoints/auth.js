@@ -176,50 +176,118 @@ router.get("/full/:mail", async (req, res) => {
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ success: false, message: "Datos incompletos" });
+  }
+
   try {
-    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(email) });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Buscar usuario por blind index
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(normalizedEmail)
+    });
+
     if (!user || !(await verifyPassword(user.pass, password))) {
       return res.status(401).json({ success: false, message: "Credenciales inválidas" });
     }
 
-    if (user.estado === "pendiente") return res.status(401).json({ success: false, message: "Usuario pendiente." });
-    if (user.estado === "inactivo") return res.status(401).json({ success: false, message: "Usuario inactivo." });
+    // Estados
+    if (user.estado === "pendiente") {
+      return res.status(401).json({
+        success: false,
+        message: "Usuario pendiente de activación. Revisa tu correo."
+      });
+    }
 
-    // Lógica de 2FA si está habilitado
-    if (user.twoFactorEnabled) {
-      return res.json({ success: true, requires2FA: true, userId: user._id });
+    if (user.estado === "inactivo") {
+      return res.status(401).json({
+        success: false,
+        message: "Usuario inactivo. Contacta al administrador."
+      });
+    }
+
+    if (user.twoFactorEnabled === true) {
+      await generateAndSend2FACode(req.db, user, '2FA_LOGIN');
+
+      return res.json({
+        success: true,
+        twoFA: true,
+        message: "Se requiere código 2FA. Enviado a tu correo."
+      });
     }
 
     const now = new Date();
     let finalToken = null;
     let expiresAt = null;
 
-    const existingToken = await req.db.collection("tokens").findOne({ email: email.toLowerCase().trim(), active: true });
+    const existingToken = await req.db.collection("tokens").findOne({
+      email: normalizedEmail,
+      active: true
+    });
 
     if (existingToken && new Date(existingToken.expiresAt) > now) {
       finalToken = existingToken.token;
       expiresAt = existingToken.expiresAt;
     } else {
-      if (existingToken) await req.db.collection("tokens").updateOne({ _id: existingToken._id }, { $set: { active: false, revokedAt: now } });
+      if (existingToken) {
+        await req.db.collection("tokens").updateOne(
+          { _id: existingToken._id },
+          { $set: { active: false, revokedAt: now } }
+        );
+      }
+
       finalToken = crypto.randomBytes(32).toString("hex");
       expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
+
       await req.db.collection("tokens").insertOne({
-        token: finalToken, email: email.toLowerCase().trim(), rol: user.rol, createdAt: now, expiresAt, active: true
+        token: finalToken,
+        email: normalizedEmail,
+        rol: user.rol,
+        createdAt: now,
+        expiresAt,
+        active: true
       });
     }
 
-    // Logs de acceso
-    const ipAddress = req.ip || req.connection.remoteAddress;
-    const agent = useragent.parse(req.headers['user-agent'] || 'Desconocido');
-    const newLogin = { usr: { name: decrypt(user.nombre), email: email.toLowerCase().trim(), cargo: user.rol }, ipAddress, os: agent.os.toString(), browser: agent.toAgent(), now };
-    await req.db.collection("ingresos").insertOne(newLogin);
+    let nombre = "";
+    try {
+      nombre = decrypt(user.nombre);
+    } catch {
+      nombre = user.nombre || "";
+    }
 
-    return res.json({ success: true, token: finalToken, usr: newLogin.usr });
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const agent = useragent.parse(req.headers["user-agent"] || "Desconocido");
+
+    await req.db.collection("ingresos").insertOne({
+      usr: {
+        name: nombre,
+        email: normalizedEmail,
+        cargo: user.rol
+      },
+      ipAddress,
+      os: agent.os?.toString?.() || "Desconocido",
+      browser: agent.toAgent?.() || "Desconocido",
+      now
+    });
+
+    return res.json({
+      success: true,
+      token: finalToken,
+      usr: {
+        name: nombre,
+        email: normalizedEmail,
+        cargo: user.rol
+      }
+    });
+
   } catch (err) {
-    res.status(500).json({ error: "Error en login" });
+    console.error("Error en login:", err);
+    return res.status(500).json({ error: "Error interno en login" });
   }
 });
-
 
 router.post("/verify-login-2fa", async (req, res) => {
   const { email, verificationCode } = req.body;
@@ -559,39 +627,39 @@ router.post("/logout", async (req, res) => {
 
 
 router.post("/register", async (req, res) => {
-    try {
-        const { nombre, apellido, mail, empresa, cargo, rol, estado } = req.body;
-        const m = mail.toLowerCase().trim();
+  try {
+    const { nombre, apellido, mail, empresa, cargo, rol, estado } = req.body;
+    const m = mail.toLowerCase().trim();
 
-        if (await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(m) })) {
-            return res.status(400).json({ error: "El usuario ya existe" });
-        }
-
-        const newUser = {
-            nombre: encrypt(nombre),
-            apellido: encrypt(apellido),
-            mail: encrypt(m),
-            mail_index: createBlindIndex(m),
-            empresa, cargo, rol, pass: "", 
-            estado: estado || "pendiente",
-            twoFactorEnabled: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        };
-
-        const result = await req.db.collection("usuarios").insertOne(newUser);
-        
-        await addNotification(req.db, {
-            userId: result.insertedId.toString(),
-            titulo: `Registro Exitoso!`,
-            descripcion: `Bienvenid@ a nuestra plataforma Virtual Acciona!`,
-            prioridad: 2, color: "#7afb24ff", icono: "User",
-        });
-
-        res.status(201).json({ success: true, message: "Usuario registrado", userId: result.insertedId });
-    } catch (err) {
-        res.status(500).json({ error: "Error al registrar" });
+    if (await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(m) })) {
+      return res.status(400).json({ error: "El usuario ya existe" });
     }
+
+    const newUser = {
+      nombre: encrypt(nombre),
+      apellido: encrypt(apellido),
+      mail: encrypt(m),
+      mail_index: createBlindIndex(m),
+      empresa, cargo, rol, pass: "",
+      estado: estado || "pendiente",
+      twoFactorEnabled: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    const result = await req.db.collection("usuarios").insertOne(newUser);
+
+    await addNotification(req.db, {
+      userId: result.insertedId.toString(),
+      titulo: `Registro Exitoso!`,
+      descripcion: `Bienvenid@ a nuestra plataforma Virtual Acciona!`,
+      prioridad: 2, color: "#7afb24ff", icono: "User",
+    });
+
+    res.status(201).json({ success: true, message: "Usuario registrado", userId: result.insertedId });
+  } catch (err) {
+    res.status(500).json({ error: "Error al registrar" });
+  }
 });
 
 // POST - Cambiar contraseña (Requiere validación de contraseña anterior)
