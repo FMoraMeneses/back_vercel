@@ -147,7 +147,7 @@ router.get("/:mail/unread-count", async (req, res) => {
     // Buscar usuario y proyectar solo las notificaciones
     const usuario = await req.db
       .collection("usuarios")
-      .findOne({ mail }, { projection: { notificaciones: 1 } });
+      .findOne({ mail: decrypt(mail) }, { projection: { notificaciones: 1 } });
 
     if (!usuario) {
       return res.status(404).json({ error: "Usuario no encontrado" });
