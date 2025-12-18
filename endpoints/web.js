@@ -41,7 +41,7 @@ router.post("/filter", async (req, res) => {
     }
 
     // Usamos 'rol' o 'cargo' según tu estructura (en tu ejemplo anterior usaste user.rol)
-    const userRole = user.rol || user.cargo;
+    const userRole = user.cargo;
 
     if (!userRole) {
       return res.status(403).json({ error: "Cargo no definido para el usuario." });
