@@ -174,51 +174,130 @@ router.get("/full/:mail", async (req, res) => {
   }
 });
 
+const crypto = require("crypto");
+const useragent = require("useragent");
+
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
+
+  // 🔐 Validación básica
+  if (!email || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "Email y contraseña requeridos"
+    });
+  }
+
   try {
-    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(email) });
+    const emailClean = email.toLowerCase().trim();
+
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(emailClean)
+    });
+
     if (!user || !(await verifyPassword(user.pass, password))) {
-      return res.status(401).json({ success: false, message: "Credenciales inválidas" });
-    }
-
-    if (user.estado === "pendiente") return res.status(401).json({ success: false, message: "Usuario pendiente." });
-    if (user.estado === "inactivo") return res.status(401).json({ success: false, message: "Usuario inactivo." });
-
-    // Lógica de 2FA si está habilitado
-    if (user.twoFactorEnabled) {
-      return res.json({ success: true, requires2FA: true, userId: user._id });
-    }
-
-    const now = new Date();
-    let finalToken = null;
-    let expiresAt = null;
-
-    const existingToken = await req.db.collection("tokens").findOne({ email: email.toLowerCase().trim(), active: true });
-
-    if (existingToken && new Date(existingToken.expiresAt) > now) {
-      finalToken = existingToken.token;
-      expiresAt = existingToken.expiresAt;
-    } else {
-      if (existingToken) await req.db.collection("tokens").updateOne({ _id: existingToken._id }, { $set: { active: false, revokedAt: now } });
-      finalToken = crypto.randomBytes(32).toString("hex");
-      expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
-      await req.db.collection("tokens").insertOne({
-        token: finalToken, email: email.toLowerCase().trim(), rol: user.rol, createdAt: now, expiresAt, active: true
+      return res.status(401).json({
+        success: false,
+        message: "Credenciales inválidas"
       });
     }
 
-    // Logs de acceso
-    const ipAddress = req.ip || req.connection.remoteAddress;
-    const agent = useragent.parse(req.headers['user-agent'] || 'Desconocido');
-    const newLogin = { usr: { name: decrypt(user.nombre), email: email.toLowerCase().trim() }, ipAddress, os: agent.os.toString(), browser: agent.toAgent(), now };
-    await req.db.collection("ingresos").insertOne(newLogin);
+    if (user.estado === "pendiente") {
+      return res.status(401).json({ success: false, message: "Usuario pendiente." });
+    }
 
-    return res.json({ success: true, token: finalToken, usr: newLogin.usr });
+    if (user.estado === "inactivo") {
+      return res.status(401).json({ success: false, message: "Usuario inactivo." });
+    }
+
+    // 🔐 2FA
+    if (user.twoFactorEnabled === true) {
+      return res.json({
+        success: true,
+        requires2FA: true,
+        userId: user._id
+      });
+    }
+
+    const now = new Date();
+    let finalToken;
+    let expiresAt;
+
+    // 🔐 Token reutilizable válido
+    const existingToken = await req.db.collection("tokens").findOne({
+      email: emailClean,
+      active: true,
+      expiresAt: { $gt: now }
+    });
+
+    if (existingToken) {
+      finalToken = existingToken.token;
+      expiresAt = existingToken.expiresAt;
+    } else {
+      // Revocar tokens viejos
+      await req.db.collection("tokens").updateMany(
+        { email: emailClean, active: true },
+        { $set: { active: false, revokedAt: now } }
+      );
+
+      finalToken = crypto.randomBytes(32).toString("hex");
+      expiresAt = new Date(now.getTime() + TOKEN_EXPIRATION);
+
+      await req.db.collection("tokens").insertOne({
+        token: finalToken,
+        email: emailClean,
+        rol: user.rol,
+        createdAt: now,
+        expiresAt,
+        active: true
+      });
+    }
+
+    // Datos cifrados con fallback
+    let nombre = "";
+    try {
+      if (typeof user.nombre === "string") {
+        nombre = decrypt(user.nombre);
+      }
+    } catch (e) {
+      // usuario antiguo sin cifrar
+      nombre = user.nombre || "";
+    }
+
+    // Log de ingreso SIN romper login
+    try {
+      const agent = useragent.parse(req.headers["user-agent"] || "");
+      await req.db.collection("ingresos").insertOne({
+        usr: { name: nombre, email: emailClean },
+        ipAddress: req.ip || req.connection?.remoteAddress || "",
+        os: agent.os?.toString() || "Desconocido",
+        browser: agent.toAgent?.() || "Desconocido",
+        createdAt: now
+      });
+    } catch (logErr) {
+      console.error("LOGIN LOG ERROR:", logErr);
+      // no bloquea el login
+    }
+
+    return res.json({
+      success: true,
+      token: finalToken,
+      usr: {
+        name: nombre,
+        email: emailClean,
+        cargo: user.rol
+      }
+    });
+
   } catch (err) {
-    res.status(500).json({ error: "Error en login" });
+    console.error("LOGIN ERROR:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Error interno en login"
+    });
   }
 });
+
 
 
 router.post("/verify-login-2fa", async (req, res) => {
