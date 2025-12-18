@@ -5,7 +5,15 @@ const { ObjectId } = require('mongodb');
 const multer = require('multer');
 const { addNotification } = require("../utils/notificaciones.helper");
 const { sendEmail } = require("../utils/mail.helper"); // Importación del helper de correo
+const {
+  encrypt,
+  decrypt,
+  createBlindIndex,
+  hashPassword,
+  verifyPassword
+} = require("../utils/seguridad.helper");
 const useragent = require('useragent');
+
 
 const TOKEN_EXPIRATION = 12 * 1000 * 60 * 60;
 // Constante para la expiración del código de recuperación (ej: 15 minutos)
@@ -88,21 +96,17 @@ const generateAndSend2FACode = async (db, user, type) => {
 router.get("/", async (req, res) => {
   try {
     const usr = await req.db.collection("usuarios").find().toArray();
-
-    if (!usr || usr.length === 0) {
-      return res.status(404).json({ error: "Usuarios no encontrados" });
-    }
-
-    // Eliminar el campo 'pass' de cada usuario
-    const usuariosSinPass = usr.map(usuario => {
-      const { pass, ...usuarioSinPass } = usuario;
-      return usuarioSinPass;
+    const procesados = usr.map(u => {
+      const { pass, mail_index, ...resto } = u;
+      return {
+        ...resto,
+        nombre: decrypt(u.nombre),
+        apellido: decrypt(u.apellido),
+        mail: decrypt(u.mail)
+      };
     });
-
-    res.status(200).json(usuariosSinPass);
-
+    res.status(200).json(procesados);
   } catch (err) {
-    console.error("Error al obtener usuarios:", err);
     res.status(500).json({ error: "Error al obtener usuarios" });
   }
 });
@@ -176,110 +180,36 @@ router.get("/full/:mail", async (req, res) => {
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
-
   try {
-    const user = await req.db.collection("usuarios").findOne({ mail: email.toLowerCase().trim() });
-    if (!user) return res.status(401).json({ success: false, message: "Credenciales inválidas" });
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(email)
+    });
 
-    // Validaciones de estado
-    if (user.estado === "pendiente")
-      return res.status(401).json({
-        success: false,
-        message: "Usuario pendiente de activación. Revisa tu correo para establecer tu contraseña."
-      });
-
-    if (user.estado === "inactivo")
-      return res.status(401).json({
-        success: false,
-        message: "Usuario inactivo. Contacta al administrador."
-      });
-
-    // Validación de contraseña (asumiendo pass plano)
-    if (user.pass !== password)
+    if (!user || !(await verifyPassword(user.pass, password))) {
       return res.status(401).json({ success: false, message: "Credenciales inválidas" });
-
-    // ----------------------------------------------------------------
-    // 🔒 LÓGICA 2FA CONDICIONAL
-    // ----------------------------------------------------------------
-
-    const is2FAEnabled = user.twoFactorEnabled === true;
-
-    if (is2FAEnabled) {
-      // LLAMADA CORREGIDA: Usar '2FA_LOGIN'
-      await generateAndSend2FACode(req.db, user, '2FA_LOGIN');
-
-      // Retornamos la bandera `twoFA: true`
-      return res.json({
-        success: true,
-        twoFA: true,
-        message: "Se requiere código 2FA. Enviado a tu correo."
-      });
     }
 
-    // ----------------------------------------------------------------
-    // LÓGICA DE TOKEN (Solo si 2FA NO está activa)
-    // ----------------------------------------------------------------
+    if (user.estado === "pendiente") return res.status(401).json({ success: false, message: "Usuario pendiente." });
 
-    const now = new Date();
-    let finalToken = null;
-    let expiresAt = null;
-    const normalizedEmail = email.toLowerCase().trim();
+    const finalToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
 
-    // 1. Buscar un token activo para este usuario
-    const existingTokenRecord = await req.db.collection("tokens").findOne({
-      email: normalizedEmail,
+    await req.db.collection("tokens").insertOne({
+      token: finalToken,
+      email: email.toLowerCase().trim(),
+      rol: user.rol,
+      createdAt: new Date(),
+      expiresAt,
       active: true
     });
 
-    if (existingTokenRecord) {
-      const existingExpiresAt = new Date(existingTokenRecord.expiresAt);
-      const isExpired = existingExpiresAt < now;
-
-      if (isExpired) {
-        await req.db.collection("tokens").updateOne(
-          { _id: existingTokenRecord._id },
-          { $set: { active: false, revokedAt: now } }
-        );
-      } else {
-        finalToken = existingTokenRecord.token;
-        expiresAt = existingExpiresAt;
-      }
-    }
-
-    // 2. Si no hay un token válido, generar uno nuevo
-    if (!finalToken) {
-      finalToken = crypto.randomBytes(32).toString("hex");
-      expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
-
-      await req.db.collection("tokens").insertOne({
-        token: finalToken,
-        email: normalizedEmail,
-        rol: user.rol,
-        createdAt: now,
-        expiresAt,
-        active: true
-      });
-    }
-
-    // 3. Registrar Ingreso
-    const ipAddress = req.ip || req.connection.remoteAddress;
-    const userAgentString = req.headers['user-agent'] || 'Desconocido';
-    const agent = useragent.parse(userAgentString);
-    const usr = { name: user.nombre, email: normalizedEmail, cargo: user.rol };
-
-    await req.db.collection("ingresos").insertOne({
-      usr,
-      ipAddress,
-      os: agent.os.toString(),
-      browser: agent.toAgent(),
-      now: now,
+    res.json({
+      success: true,
+      token: finalToken,
+      usr: { name: decrypt(user.nombre), email: email.toLowerCase().trim(), cargo: user.rol }
     });
-
-    // 4. Retornar el token
-    return res.json({ success: true, token: finalToken, usr });
   } catch (err) {
-    console.error("Error en login:", err);
-    return res.status(500).json({ error: "Error interno en login" });
+    res.status(500).json({ error: "Error en login" });
   }
 });
 
@@ -653,17 +583,32 @@ router.post("/validate", async (req, res) => {
 // LOGOUT - Elimina o desactiva token en DB
 router.post("/logout", async (req, res) => {
   const { token } = req.body;
-  if (!token) return res.status(400).json({ success: false, message: "Token requerido" });
+  await req.db.collection("tokens").updateOne({ token }, { $set: { active: false, revokedAt: new Date() } });
+  res.json({ success: true, message: "Sesión cerrada" });
+});
 
+router.get("/mantenimiento/migrar-pqc", async (req, res) => {
   try {
-    await req.db.collection("tokens").updateOne(
-      { token },
-      { $set: { active: false, revokedAt: new Date() } }
-    );
-    res.json({ success: true, message: "Sesión cerrada" });
+    const usuarios = await req.db.collection("usuarios").find().toArray();
+    let cont = 0;
+    for (let u of usuarios) {
+      const up = {};
+      if (u.pass && !u.pass.startsWith('$argon2')) up.pass = await hashPassword(u.pass);
+      if (u.nombre && !u.nombre.includes(':')) up.nombre = encrypt(u.nombre);
+      if (u.apellido && !u.apellido.includes(':')) up.apellido = encrypt(u.apellido);
+      if (u.mail && !u.mail.includes(':')) {
+        const cleanMail = u.mail.toLowerCase().trim();
+        up.mail = encrypt(cleanMail);
+        up.mail_index = createBlindIndex(cleanMail);
+      }
+      if (Object.keys(up).length > 0) {
+        await req.db.collection("usuarios").updateOne({ _id: u._id }, { $set: up });
+        cont++;
+      }
+    }
+    res.json({ success: true, message: `Migración finalizada. ${cont} registros procesados.` });
   } catch (err) {
-    console.error("Error cerrando sesión:", err);
-    res.status(500).json({ success: false, message: "Error interno al cerrar sesión" });
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -671,47 +616,30 @@ router.post("/logout", async (req, res) => {
 router.post("/register", async (req, res) => {
   try {
     const { nombre, apellido, mail, empresa, cargo, rol, estado } = req.body;
-    if (!nombre || !apellido || !mail || !empresa || !cargo || !rol) {
-      return res.status(400).json({ error: "Todos los campos son obligatorios" });
-    }
-    const existingUser = await req.db.collection("usuarios").findOne({ mail });
-    if (existingUser) {
+    const cleanMail = mail.toLowerCase().trim();
+
+    if (await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(cleanMail) })) {
       return res.status(400).json({ error: "El usuario ya existe" });
     }
+
     const newUser = {
-      nombre,
-      apellido,
-      mail: mail.toLowerCase().trim(),
+      nombre: encrypt(nombre),
+      apellido: encrypt(apellido),
+      mail: encrypt(cleanMail),
+      mail_index: createBlindIndex(cleanMail),
       empresa,
       cargo,
       rol,
       pass: "",
-      estado: estado,
+      estado: estado || "pendiente",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
     const result = await req.db.collection("usuarios").insertOne(newUser);
-    const createdUser = await req.db.collection("usuarios").findOne({
-      _id: result.insertedId
-    });
-
-    await addNotification(req.db, {
-      userId: result.insertedId.toString(),
-      titulo: `Registro Exitoso!`,
-      descripcion: `Bienvenid@ a nuestra plataforma Virtual Acciona!`, // Agregamos la info aquí
-      prioridad: 2,
-      color: "#7afb24ff",
-      icono: "User",
-    });
-
-    res.status(201).json({
-      success: true,
-      message: "Usuario registrado exitosamente",
-      user: createdUser
-    });
+    res.status(201).json({ success: true, message: "Registrado", userId: result.insertedId });
   } catch (err) {
-    console.error("Error al registrar usuario:", err);
-    res.status(500).json({ error: "Error interno del servidor" });
+    res.status(500).json({ error: "Error al registrar" });
   }
 });
 
@@ -866,94 +794,16 @@ router.delete("/users/:id", async (req, res) => {
 router.post("/set-password", async (req, res) => {
   try {
     const { userId, password } = req.body;
-    if (!userId || !password) {
-      return res.status(400).json({ error: "UserId y contraseña son requeridos" });
-    }
+    if (password.length < 8) return res.status(400).json({ error: "Contraseña muy corta" });
 
-    // NUEVA VALIDACIÓN DE CONTRASEÑA EN BACKEND
-    if (password.length < 8) {
-      return res.status(400).json({
-        error: "La contraseña debe tener al menos 8 caracteres"
-      });
-    }
-
-    // Validar que tenga letras y números
-    const hasLetter = /[a-zA-Z]/.test(password);
-    const hasNumber = /[0-9]/.test(password);
-
-    if (!hasLetter || !hasNumber) {
-      return res.status(400).json({
-        error: "La contraseña debe incluir letras y números"
-      });
-    }
-
-    // Validación adicional de seguridad (opcional pero recomendado)
-    if (password.length > 128) {
-      return res.status(400).json({
-        error: "La contraseña es demasiado larga"
-      });
-    }
-
-    // Evitar contraseñas comunes (lista básica)
-    const commonPasswords = ['12345678', 'password', 'contraseña', 'admin123', 'qwerty123'];
-    if (commonPasswords.includes(password.toLowerCase())) {
-      return res.status(400).json({
-        error: "La contraseña es demasiado común. Elige una más segura"
-      });
-    }
-
-    const existingUser = await req.db.collection("usuarios").findOne({
-      _id: new ObjectId(userId)
-    });
-
-    if (!existingUser) {
-      return res.status(404).json({ error: "Usuario no encontrado" });
-    }
-
-    if (existingUser.estado !== "pendiente") {
-      // Permitimos que este endpoint sea usado para setear contraseña en un flujo de recuperación
-      // Si el usuario ya está activo, asumimos que este endpoint es para setear una nueva contraseña.
-      // Se podría añadir lógica para diferenciar si viene de recuperación (borrarpass) o de activación inicial (register).
-
-      // Si el flujo es solo para activación inicial, descomentar la línea de abajo y comentar la de arriba
-      // return res.status(400).json({
-      //   error: "La contraseña ya fue establecida. Si necesitas cambiarla, usa /change-password."
-      // });
-    }
-
-    const result = await req.db.collection("usuarios").updateOne(
-      {
-        _id: new ObjectId(userId),
-        // Si quieres que el set-password funcione para recuperación de un usuario ACTIVO
-        // debes quitar la condición 'estado: "pendiente"'.
-        // Lo dejaré sin la condición para que funcione como "reset" en la recuperación.
-      },
-      {
-        $set: {
-          pass: password,
-          estado: "activo", // Aseguramos que el estado pase a activo (si estaba en pendiente)
-          updatedAt: new Date().toISOString()
-        }
-      }
+    const hashed = await hashPassword(password);
+    await req.db.collection("usuarios").updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: { pass: hashed, estado: "activo", updatedAt: new Date().toISOString() } }
     );
-
-    if (result.matchedCount === 0) {
-      return res.status(400).json({
-        error: "No se pudo actualizar la contraseña. El usuario no fue encontrado o el ID es incorrecto."
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "Contraseña establecida exitosamente"
-    });
-
-  } catch (error) {
-    console.error("Error al establecer contraseña:", error);
-    if (error.message.includes("ObjectId")) {
-      return res.status(400).json({ error: "ID de usuario inválido" });
-    }
-    res.status(500).json({ error: "Error interno del servidor" });
+    res.json({ success: true, message: "Password establecido" });
+  } catch (err) {
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
