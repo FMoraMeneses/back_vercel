@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const { ObjectId } = require("mongodb");
 const { addNotification } = require("../utils/notificaciones.helper");
+const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
 // Crear una notificación (para 1 usuario o grupo)
 router.post("/", async (req, res) => {
@@ -45,7 +46,7 @@ router.get("/:nombre", async (req, res) => {
   try {
     const usuario = await req.db
       .collection("usuarios")
-      .findOne({ mail: req.params.nombre }, { projection: { notificaciones: 1 } });
+      .findOne({ mail: decrypt(req.params.nombre) }, { projection: { notificaciones: 1 } });
 
     if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
 
@@ -60,7 +61,7 @@ router.get("/:nombre", async (req, res) => {
 router.put("/:userId/:notiId/leido", async (req, res) => {
   try {
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      { mail: req.params.userId, "notificaciones.id": req.params.notiId },
+      { mail: decrypt(req.params.userId), "notificaciones.id": req.params.notiId },
       { $set: { "notificaciones.$.leido": true } },
       { returnDocument: "after" }
     );
@@ -79,7 +80,7 @@ router.put("/:userId/:notiId/leido", async (req, res) => {
 router.delete("/:mail/:notiId", async (req, res) => {
   try {
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      { mail: req.params.mail },
+      { mail: decrypt(req.params.mail) },
       { $pull: { notificaciones: { id: req.params.notiId } } },
       { returnDocument: "after" }
     );
@@ -97,7 +98,7 @@ router.delete("/:mail/:notiId", async (req, res) => {
 router.delete("/:mail", async (req, res) => {
   try {
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      { mail: req.params.mail },
+      { mail: decrypt(req.params.mail) },
       { $set: { notificaciones: [] } }, // Vacía el array completo
       { returnDocument: "after" }
     );
