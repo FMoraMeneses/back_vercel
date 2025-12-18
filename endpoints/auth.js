@@ -95,12 +95,17 @@ router.get("/", async (req, res) => {
       return res.status(404).json({ error: "Usuarios no encontrados" });
     }
 
-    // Mapear usuarios, eliminar 'pass' y descifrar campos necesarios
+    // Mapear usuarios, eliminar pass y descifrar campos sensibles
     const usuariosProcesados = usuarios.map(u => {
-      const { pass, nombre, ...resto } = u; // extraemos pass y nombre
+      const { pass, ...resto } = u;
+
       return {
         ...resto,
-        nombre: decrypt(nombre) // desciframos el nombre
+        nombre: decrypt(u.nombre),
+        apellido: decrypt(u.apellido),
+        cargo: decrypt(u.cargo),
+        empresa: decrypt(u.empresa),
+        mail: decrypt(u.mail)
       };
     });
 
