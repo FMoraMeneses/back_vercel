@@ -6,7 +6,7 @@ const multer = require('multer');
 const { addNotification } = require("../utils/notificaciones.helper");
 const { sendEmail } = require("../utils/mail.helper"); // Importación del helper de correo
 const useragent = require('useragent');
-const { createBlindIndex, verifyPassword, decrypt } = require("../helpers/seguridad.helper");
+const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
 
 const TOKEN_EXPIRATION = 12 * 1000 * 60 * 60;
