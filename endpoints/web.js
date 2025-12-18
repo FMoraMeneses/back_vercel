@@ -24,14 +24,6 @@ router.post("/filter", async (req, res) => {
       return res.status(401).json({ error: `Acceso denegado: ${tokenResult.reason}.` });
     }
 
-    // Seguridad extra: Validar que el token pertenezca al mail que hace la solicitud
-    if (token.email !== cleanMail) {
-      console.log(`Token no corresponde al usuario solicitado: ${cleanMail}`);
-      console.log(`email 1 ${token.email}`);
-      console.log(`email 2 ${cleanMail}`);
-
-      return res.status(403).json({ error: "El token no corresponde al usuario solicitado." });
-    }
 
     // =========================================================
     // --- PASO 2: Obtener el Rol del Usuario (Uso de Blind Index) ---
