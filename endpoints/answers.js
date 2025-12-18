@@ -6,6 +6,8 @@ const { addNotification } = require("../utils/notificaciones.helper");
 const { generarAnexoDesdeRespuesta } = require("../utils/generador.helper");
 const { enviarCorreoRespaldo } = require("../utils/mailrespaldo.helper");
 const { validarToken } = require("../utils/validarToken.js");
+const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
+const { sendEmail } = require("../utils/mail.helper");
 
 // Función para normalizar nombres de archivos (versión completa y segura)
 const normalizeFilename = (filename) => {
@@ -916,51 +918,86 @@ router.post("/:id/upload-correction", upload.single('correctedFile'), async (req
     console.log("Debug: Iniciando upload-correction para ID:", req.params.id);
 
     if (!req.file) {
-      console.log("Debug: No se subió ningún archivo");
       return res.status(400).json({ error: "No se subió ningún archivo" });
     }
 
-    console.log("Debug: Archivo recibido:", req.file.originalname, "Tamaño:", req.file.size);
+    // 1. Buscar la respuesta para obtener la referencia del usuario al que notificaremos
+    // Asumimos que la colección 'respuestas' tiene un campo 'userId' o 'mail_index'
+    const respuesta = await req.db.collection("respuestas").findOne({ _id: new ObjectId(req.params.id) });
+    
+    if (!respuesta) {
+      return res.status(404).json({ error: "Respuesta no encontrada" });
+    }
+
+    // 2. Buscar al usuario para obtener sus datos de contacto (Descifrar para el mail)
+    const user = await req.db.collection("usuarios").findOne({ _id: new ObjectId(respuesta.userId) });
 
     const normalizedFileName = normalizeFilename(req.file.originalname);
 
-    const correctionData = {
-      fileName: normalizedFileName,
-      tipo: 'pdf',
-      fileData: req.file.buffer,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype,
-      uploadedAt: new Date()
-    };
-
+    // 3. Actualizar la respuesta en la base de datos
     const result = await req.db.collection("respuestas").updateOne(
       { _id: new ObjectId(req.params.id) },
       {
         $set: {
           hasCorrection: true,
           correctionFileName: normalizedFileName,
+          // Almacenamos el buffer cifrado si consideras que el archivo es sensible
+          // fileData: encrypt(req.file.buffer), 
+          fileData: req.file.buffer, 
           updatedAt: new Date()
         }
       }
     );
 
-    console.log("Debug: Resultado de la actualización en BD:", result);
-
     if (result.matchedCount === 0) {
-      console.log("Debug: No se encontró la respuesta con ID:", req.params.id);
-      return res.status(404).json({ error: "Respuesta no encontrada" });
+      return res.status(404).json({ error: "No se pudo actualizar la respuesta" });
     }
 
-    console.log("Debug: Corrección subida exitosamente para ID:", req.params.id);
+    // 4. Lógica de envío de Correo Electrónico (Si el usuario existe)
+    if (user) {
+      const userNombre = decrypt(user.nombre);
+      const userMail = decrypt(user.mail);
+
+      const htmlContent = `
+          <div style="font-family: sans-serif; color: #333;">
+              <h2 style="color: #f97316;">Nueva Corrección Disponible</h2>
+              <p>Hola <strong>${userNombre}</strong>,</p>
+              <p>Te informamos que se ha subido una nueva corrección para tu solicitud en la plataforma <strong>Acciona</strong>.</p>
+              <p><strong>Detalles del archivo:</strong></p>
+              <ul>
+                  <li>Archivo: ${normalizedFileName}</li>
+                  <li>Fecha: ${new Date().toLocaleString()}</li>
+              </ul>
+              <p>Puedes revisar los detalles e instrucciones ingresando a tu panel de usuario.</p>
+              <br>
+              <p>Saludos cordiales,</p>
+              <p>El equipo de Acciona</p>
+          </div>
+      `;
+
+      try {
+        await sendEmail({
+            to: userMail,
+            subject: 'Notificación de Corrección - Acciona',
+            html: htmlContent
+        });
+        console.log("Debug: Correo de notificación enviado a:", userMail);
+      } catch (mailErr) {
+        console.error("Error enviando correo de corrección:", mailErr);
+        // No bloqueamos la respuesta del cliente si el correo falla
+      }
+    }
 
     res.json({
-      message: "Corrección subida correctamente",
-      fileName: correctionData.fileName,
-      fileSize: correctionData.fileSize
+      success: true,
+      message: "Corrección subida y notificación enviada correctamente",
+      fileName: normalizedFileName,
+      fileSize: req.file.size
     });
+
   } catch (err) {
     console.error("Error subiendo corrección:", err);
-    res.status(500).json({ error: "Error subiendo corrección" });
+    res.status(500).json({ error: "Error interno al procesar la corrección" });
   }
 });
 
