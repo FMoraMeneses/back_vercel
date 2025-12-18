@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { ObjectId } = require("mongodb");
 const { addNotification } = require("../utils/notificaciones.helper");
+const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
 // Nuevo endpoint para obtener información del documento por responseId
 // MODIFICAR el endpoint POST para no almacenar en BD

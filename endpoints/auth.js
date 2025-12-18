@@ -89,19 +89,22 @@ const generateAndSend2FACode = async (db, user, type) => {
 
 router.get("/", async (req, res) => {
   try {
-    const usr = await req.db.collection("usuarios").find().toArray();
+    const usuarios = await req.db.collection("usuarios").find().toArray();
 
-    if (!usr || usr.length === 0) {
+    if (!usuarios || usuarios.length === 0) {
       return res.status(404).json({ error: "Usuarios no encontrados" });
     }
 
-    // Eliminar el campo 'pass' de cada usuario
-    const usuariosSinPass = usr.map(usuario => {
-      const { pass, ...usuarioSinPass } = usuario;
-      return usuarioSinPass;
+    // Mapear usuarios, eliminar 'pass' y descifrar campos necesarios
+    const usuariosProcesados = usuarios.map(u => {
+      const { pass, nombre, ...resto } = u; // extraemos pass y nombre
+      return {
+        ...resto,
+        nombre: decrypt(nombre) // desciframos el nombre
+      };
     });
 
-    res.status(200).json(usuariosSinPass);
+    res.status(200).json(usuariosProcesados);
 
   } catch (err) {
     console.error("Error al obtener usuarios:", err);
