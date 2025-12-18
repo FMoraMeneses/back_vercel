@@ -25,9 +25,9 @@ router.post("/filter", async (req, res) => {
     }
 
     // Seguridad extra: Validar que el token pertenezca al mail que hace la solicitud
-    if (tokenResult.email !== cleanMail) {
+    if (token.email !== cleanMail) {
       console.log(`Token no corresponde al usuario solicitado: ${cleanMail}`);
-      console.log(`email 1 ${tokenResult.email}`);
+      console.log(`email 1 ${token.email}`);
       console.log(`email 2 ${cleanMail}`);
 
       return res.status(403).json({ error: "El token no corresponde al usuario solicitado." });
