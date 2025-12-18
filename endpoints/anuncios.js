@@ -4,6 +4,7 @@ const { ObjectId } = require("mongodb");
 const { addNotification } = require("../utils/notificaciones.helper");
 
 // Nuevo endpoint para obtener información del documento por responseId
+// MODIFICAR el endpoint POST para no almacenar en BD
 router.post('/', async (req, res) => {
   console.log('POST /api/anuncios - Body recibido:', req.body);
   
@@ -50,7 +51,7 @@ router.post('/', async (req, res) => {
     let resultadoEnvio;
     const fechaEnvio = new Date();
 
-    // ENVIAR SEGÚN TIPO DE DESTINATARIOS
+    // ENVIAR SEGÚN TIPO DE DESTINATARIOS (sin almacenar en BD)
     if (destinatarios.tipo === 'todos') {
       console.log('📨 Enviando a TODOS los usuarios activos');
       
@@ -152,48 +153,21 @@ router.post('/', async (req, res) => {
       };
 
       console.log(`Total manual: ${totalEnviados} enviados, ${totalErrores} errores`);
-
-    } else {
-      console.log('Tipo de destinatario no válido:', destinatarios.tipo);
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Tipo de destinatario no válido' 
-      });
     }
 
-    // GUARDAR REGISTRO DEL ANUNCIO
-    const anuncioRegistro = {
-      titulo,
-      descripcion,
-      prioridad,
-      color,
-      icono,
-      actionUrl,
-      destinatarios,
-      fechaEnvio,
-      enviadoPor: req.userEmail || req.user?.mail || 'Sistema',
-      resultado: {
-        modificados: resultadoEnvio.modifiedCount || 0,
-        errores: resultadoEnvio.errores || 0,
-        total: (resultadoEnvio.modifiedCount || 0) + (resultadoEnvio.errores || 0)
-      }
-    };
+    // ✅ REMOVER: No guardar en colección 'anuncios'
+    // const anuncioRegistro = { ... }; // Eliminar todo este bloque
+    // const insertResult = await db.collection('anuncios').insertOne(anuncioRegistro);
 
-    console.log('Guardando registro en BD:', anuncioRegistro);
-    
-    const insertResult = await db.collection('anuncios').insertOne(anuncioRegistro);
-    console.log('Registro guardado con ID:', insertResult.insertedId);
-
-    // RESPONDER AL FRONTEND
+    // ✅ RESPONDER sin ID de BD
     const respuesta = {
       success: true,
-      message: `Anuncio enviado exitosamente a ${resultadoEnvio.modifiedCount || 0} usuario(s)`,
+      message: `Notificación enviada exitosamente a ${resultadoEnvio?.modifiedCount || 0} usuario(s)`,
       data: {
-        id: insertResult.insertedId,
         titulo,
         fechaEnvio,
-        destinatariosEnviados: resultadoEnvio.modifiedCount || 0,
-        errores: resultadoEnvio.errores || 0
+        destinatariosEnviados: resultadoEnvio?.modifiedCount || 0,
+        errores: resultadoEnvio?.errores || 0
       }
     };
 
@@ -212,49 +186,16 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/anuncios - Listar anuncios enviados
+// MODIFICAR el GET para devolver array vacío (ya que no se almacenan)
 router.get('/', async (req, res) => {
-  console.log('GET /api/anuncios - Obteniendo historial');
+  console.log('GET /api/anuncios - Sin almacenamiento histórico');
   
   try {
-    const db = req.db;
-    
-    if (!db) {
-      console.error('No hay conexión a la base de datos');
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error de conexión a la base de datos' 
-      });
-    }
-
-    const anuncios = await db.collection('anuncios')
-      .find({})
-      .sort({ fechaEnvio: -1 })
-      .limit(100)
-      .toArray();
-
-    console.log(`📊 Encontrados ${anuncios.length} anuncios`);
-    
+    // Devolver array vacío ya que no se almacenan anuncios
     const respuesta = {
       success: true,
-      data: anuncios.map(anuncio => ({
-        _id: anuncio._id,
-        titulo: anuncio.titulo,
-        descripcion: anuncio.descripcion,
-        prioridad: anuncio.prioridad,
-        color: anuncio.color,
-        icono: anuncio.icono,
-        fechaEnvio: anuncio.fechaEnvio,
-        destinatariosTipo: anuncio.destinatarios?.tipo,
-        resultado: anuncio.resultado,
-        enviadoPor: anuncio.enviadoPor
-      }))
+      data: []
     };
-
-    console.log('Enviando respuesta GET:', { 
-      cantidad: respuesta.data.length,
-      primerosTitulos: respuesta.data.slice(0, 3).map(a => a.titulo)
-    });
     
     res.json(respuesta);
     

@@ -5,15 +5,7 @@ const { ObjectId } = require('mongodb');
 const multer = require('multer');
 const { addNotification } = require("../utils/notificaciones.helper");
 const { sendEmail } = require("../utils/mail.helper"); // Importación del helper de correo
-const {
-  encrypt,
-  decrypt,
-  createBlindIndex,
-  hashPassword,
-  verifyPassword
-} = require("../utils/seguridad.helper");
 const useragent = require('useragent');
-
 
 const TOKEN_EXPIRATION = 12 * 1000 * 60 * 60;
 // Constante para la expiración del código de recuperación (ej: 15 minutos)
@@ -96,17 +88,21 @@ const generateAndSend2FACode = async (db, user, type) => {
 router.get("/", async (req, res) => {
   try {
     const usr = await req.db.collection("usuarios").find().toArray();
-    const procesados = usr.map(u => {
-      const { pass, mail_index, ...resto } = u;
-      return {
-        ...resto,
-        nombre: decrypt(u.nombre),
-        apellido: decrypt(u.apellido),
-        mail: decrypt(u.mail)
-      };
+
+    if (!usr || usr.length === 0) {
+      return res.status(404).json({ error: "Usuarios no encontrados" });
+    }
+
+    // Eliminar el campo 'pass' de cada usuario
+    const usuariosSinPass = usr.map(usuario => {
+      const { pass, ...usuarioSinPass } = usuario;
+      return usuarioSinPass;
     });
-    res.status(200).json(procesados);
+
+    res.status(200).json(usuariosSinPass);
+
   } catch (err) {
+    console.error("Error al obtener usuarios:", err);
     res.status(500).json({ error: "Error al obtener usuarios" });
   }
 });
@@ -181,33 +177,44 @@ router.get("/full/:mail", async (req, res) => {
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   try {
-    const user = await req.db.collection("usuarios").findOne({
-      mail_index: createBlindIndex(email)
-    });
-
+    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(email) });
     if (!user || !(await verifyPassword(user.pass, password))) {
       return res.status(401).json({ success: false, message: "Credenciales inválidas" });
     }
 
     if (user.estado === "pendiente") return res.status(401).json({ success: false, message: "Usuario pendiente." });
+    if (user.estado === "inactivo") return res.status(401).json({ success: false, message: "Usuario inactivo." });
 
-    const finalToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
+    // Lógica de 2FA si está habilitado
+    if (user.twoFactorEnabled) {
+      return res.json({ success: true, requires2FA: true, userId: user._id });
+    }
 
-    await req.db.collection("tokens").insertOne({
-      token: finalToken,
-      email: email.toLowerCase().trim(),
-      rol: user.rol,
-      createdAt: new Date(),
-      expiresAt,
-      active: true
-    });
+    const now = new Date();
+    let finalToken = null;
+    let expiresAt = null;
 
-    res.json({
-      success: true,
-      token: finalToken,
-      usr: { name: decrypt(user.nombre), email: email.toLowerCase().trim(), cargo: user.rol }
-    });
+    const existingToken = await req.db.collection("tokens").findOne({ email: email.toLowerCase().trim(), active: true });
+
+    if (existingToken && new Date(existingToken.expiresAt) > now) {
+      finalToken = existingToken.token;
+      expiresAt = existingToken.expiresAt;
+    } else {
+      if (existingToken) await req.db.collection("tokens").updateOne({ _id: existingToken._id }, { $set: { active: false, revokedAt: now } });
+      finalToken = crypto.randomBytes(32).toString("hex");
+      expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
+      await req.db.collection("tokens").insertOne({
+        token: finalToken, email: email.toLowerCase().trim(), rol: user.rol, createdAt: now, expiresAt, active: true
+      });
+    }
+
+    // Logs de acceso
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const agent = useragent.parse(req.headers['user-agent'] || 'Desconocido');
+    const newLogin = { usr: { name: decrypt(user.nombre), email: email.toLowerCase().trim() }, ipAddress, os: agent.os.toString(), browser: agent.toAgent(), now };
+    await req.db.collection("ingresos").insertOne(newLogin);
+
+    return res.json({ success: true, token: finalToken, usr: newLogin.usr });
   } catch (err) {
     res.status(500).json({ error: "Error en login" });
   }
@@ -301,74 +308,27 @@ router.post("/verify-login-2fa", async (req, res) => {
 // =================================================================
 // 🔑 ENDPOINT 1: SOLICITAR RECUPERACIÓN (PASO 1)
 // =================================================================
+// --- RECUPERACION Y 2FA (LOGICA INTEGRADA) ---
 router.post("/recuperacion", async (req, res) => {
   const { email } = req.body;
-
-  if (!email) {
-    return res.status(400).json({ message: "El correo electrónico es obligatorio." });
-  }
-
   try {
-    const user = await req.db.collection("usuarios").findOne({
-      mail: email.toLowerCase().trim()
-      // No validamos estado "activo" aquí para dar feedback si el email existe
-    });
+    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(email) });
+    if (!user || user.estado === "inactivo") return res.status(404).json({ message: "No disponible." });
 
-    // 1. Simular éxito si el usuario no existe para prevenir enumeración,
-    // pero para debug y flujo explícito, retornamos 404/401 si no está activo.
-    if (!user || user.estado === "inactivo") {
-      return res.status(404).json({ message: "Usuario no encontrado o no activo." });
-    }
-
-    // 2. Generar código de 6 dígitos numéricos
-    // Aseguramos que tenga 6 dígitos, rellenando con ceros si es necesario, aunque
-    // crypto.randomInt(100000, 999999) ya garantiza 6 dígitos.
-    const verificationCode = crypto.randomInt(100000, 999999).toString();
+    const code = crypto.randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + RECOVERY_CODE_EXPIRATION);
 
-    // 3. Invalidar códigos anteriores para este usuario/email (Limpieza)
-    await req.db.collection("recovery_codes").updateMany(
-      { email: email.toLowerCase().trim(), active: true },
-      { $set: { active: false, revokedAt: new Date(), reason: "new_code_issued" } }
-    );
-
-    // 4. Guardar el nuevo código en la colección temporal
-    await req.db.collection("recovery_codes").insertOne({
-      email: email.toLowerCase().trim(),
-      code: verificationCode,
-      userId: user._id.toString(), // Guardamos el ID por conveniencia
-      createdAt: new Date(),
-      expiresAt: expiresAt,
-      active: true
-    });
-
-    // 5. Enviar el email
-    const htmlContent = `
-            <p>Hola ${user.nombre},</p>
-            <p>Hemos recibido una solicitud para restablecer la contraseña de tu cuenta Acciona.</p>
-            <p>Tu código de verificación es:</p>
-            <h2 style="color: #f97316; font-size: 24px; text-align: center; border: 1px solid #f97316; padding: 10px; border-radius: 8px;">
-                ${verificationCode}
-            </h2>
-            <p>Este código expira en 15 minutos. Si no solicitaste este cambio, ignora este correo.</p>
-            <p>Saludos cordiales,</p>
-            <p>El equipo de Acciona</p>
-        `;
+    await req.db.collection("recovery_codes").updateMany({ email: email.toLowerCase().trim(), active: true }, { $set: { active: false } });
+    await req.db.collection("recovery_codes").insertOne({ email: email.toLowerCase().trim(), code, userId: user._id.toString(), createdAt: new Date(), expiresAt, active: true });
 
     await sendEmail({
       to: email,
-      subject: 'Código de Recuperación de Contraseña - Acciona',
-      html: htmlContent
+      subject: 'Recuperación de Contraseña',
+      html: `<h2>Tu código es: ${code}</h2>`
     });
 
-    // 6. Respuesta al cliente (status 200 para pasar al paso 2)
-    res.status(200).json({ success: true, message: "Código de recuperación enviado." });
-
-  } catch (err) {
-    console.error("Error en /recuperacion:", err);
-    // Error genérico si el envío falla o hay un error de DB
-    res.status(500).json({ message: "Error interno al procesar la solicitud." });
-  }
+    res.json({ success: true, message: "Enviado." });
+  } catch (err) { res.status(500).json({ error: "Error interno" }); }
 });
 
 // =================================================================
@@ -583,64 +543,55 @@ router.post("/validate", async (req, res) => {
 // LOGOUT - Elimina o desactiva token en DB
 router.post("/logout", async (req, res) => {
   const { token } = req.body;
-  await req.db.collection("tokens").updateOne({ token }, { $set: { active: false, revokedAt: new Date() } });
-  res.json({ success: true, message: "Sesión cerrada" });
-});
+  if (!token) return res.status(400).json({ success: false, message: "Token requerido" });
 
-router.get("/mantenimiento/migrar-pqc", async (req, res) => {
   try {
-    const usuarios = await req.db.collection("usuarios").find().toArray();
-    let cont = 0;
-    for (let u of usuarios) {
-      const up = {};
-      if (u.pass && !u.pass.startsWith('$argon2')) up.pass = await hashPassword(u.pass);
-      if (u.nombre && !u.nombre.includes(':')) up.nombre = encrypt(u.nombre);
-      if (u.apellido && !u.apellido.includes(':')) up.apellido = encrypt(u.apellido);
-      if (u.mail && !u.mail.includes(':')) {
-        const cleanMail = u.mail.toLowerCase().trim();
-        up.mail = encrypt(cleanMail);
-        up.mail_index = createBlindIndex(cleanMail);
-      }
-      if (Object.keys(up).length > 0) {
-        await req.db.collection("usuarios").updateOne({ _id: u._id }, { $set: up });
-        cont++;
-      }
-    }
-    res.json({ success: true, message: `Migración finalizada. ${cont} registros procesados.` });
+    await req.db.collection("tokens").updateOne(
+      { token },
+      { $set: { active: false, revokedAt: new Date() } }
+    );
+    res.json({ success: true, message: "Sesión cerrada" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Error cerrando sesión:", err);
+    res.status(500).json({ success: false, message: "Error interno al cerrar sesión" });
   }
 });
 
 
 router.post("/register", async (req, res) => {
-  try {
-    const { nombre, apellido, mail, empresa, cargo, rol, estado } = req.body;
-    const cleanMail = mail.toLowerCase().trim();
+    try {
+        const { nombre, apellido, mail, empresa, cargo, rol, estado } = req.body;
+        const m = mail.toLowerCase().trim();
 
-    if (await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(cleanMail) })) {
-      return res.status(400).json({ error: "El usuario ya existe" });
+        if (await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(m) })) {
+            return res.status(400).json({ error: "El usuario ya existe" });
+        }
+
+        const newUser = {
+            nombre: encrypt(nombre),
+            apellido: encrypt(apellido),
+            mail: encrypt(m),
+            mail_index: createBlindIndex(m),
+            empresa, cargo, rol, pass: "", 
+            estado: estado || "pendiente",
+            twoFactorEnabled: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+
+        const result = await req.db.collection("usuarios").insertOne(newUser);
+        
+        await addNotification(req.db, {
+            userId: result.insertedId.toString(),
+            titulo: `Registro Exitoso!`,
+            descripcion: `Bienvenid@ a nuestra plataforma Virtual Acciona!`,
+            prioridad: 2, color: "#7afb24ff", icono: "User",
+        });
+
+        res.status(201).json({ success: true, message: "Usuario registrado", userId: result.insertedId });
+    } catch (err) {
+        res.status(500).json({ error: "Error al registrar" });
     }
-
-    const newUser = {
-      nombre: encrypt(nombre),
-      apellido: encrypt(apellido),
-      mail: encrypt(cleanMail),
-      mail_index: createBlindIndex(cleanMail),
-      empresa,
-      cargo,
-      rol,
-      pass: "",
-      estado: estado || "pendiente",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    const result = await req.db.collection("usuarios").insertOne(newUser);
-    res.status(201).json({ success: true, message: "Registrado", userId: result.insertedId });
-  } catch (err) {
-    res.status(500).json({ error: "Error al registrar" });
-  }
 });
 
 // POST - Cambiar contraseña (Requiere validación de contraseña anterior)
@@ -791,19 +742,88 @@ router.delete("/users/:id", async (req, res) => {
   }
 });
 
+
 router.post("/set-password", async (req, res) => {
   try {
     const { userId, password } = req.body;
-    if (password.length < 8) return res.status(400).json({ error: "Contraseña muy corta" });
+    if (!userId || !password) {
+      return res.status(400).json({ error: "UserId y contraseña son requeridos" });
+    }
+
+    // NUEVA VALIDACIÓN DE CONTRASEÑA EN BACKEND
+    if (password.length < 8) {
+      return res.status(400).json({
+        error: "La contraseña debe tener al menos 8 caracteres"
+      });
+    }
+
+    // Validar que tenga letras y números
+    const hasLetter = /[a-zA-Z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+
+    if (!hasLetter || !hasNumber) {
+      return res.status(400).json({
+        error: "La contraseña debe incluir letras y números"
+      });
+    }
+
+    // Validación adicional de seguridad (opcional pero recomendado)
+    if (password.length > 64) {
+      return res.status(400).json({
+        error: "La contraseña es demasiado larga"
+      });
+    }
+
+    // Evitar contraseñas comunes (lista básica)
+    const commonPasswords = ['12345678', 'password', 'contraseña', 'admin123', 'qwerty123'];
+    if (commonPasswords.includes(password.toLowerCase())) {
+      return res.status(400).json({
+        error: "La contraseña es demasiado común. Elige una más segura"
+      });
+    }
+
+    const existingUser = await req.db.collection("usuarios").findOne({
+      _id: new ObjectId(userId)
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: "Usuario no encontrado" });
+    }
+
+    if (existingUser.estado !== "pendiente") {
+      // Permitimos que este endpoint sea usado para setear contraseña en un flujo de recuperación
+      // Si el usuario ya está activo, asumimos que este endpoint es para setear una nueva contraseña.
+      // Se podría añadir lógica para diferenciar si viene de recuperación (borrarpass) o de activación inicial (register).
+
+      // Si el flujo es solo para activación inicial, descomentar la línea de abajo y comentar la de arriba
+      // return res.status(400).json({
+      //   error: "La contraseña ya fue establecida. Si necesitas cambiarla, usa /change-password."
+      // });
+    }
 
     const hashed = await hashPassword(password);
-    await req.db.collection("usuarios").updateOne(
+    const result = await req.db.collection("usuarios").updateOne(
       { _id: new ObjectId(userId) },
       { $set: { pass: hashed, estado: "activo", updatedAt: new Date().toISOString() } }
     );
-    res.json({ success: true, message: "Password establecido" });
-  } catch (err) {
-    res.status(500).json({ error: "Error interno" });
+
+    if (result.matchedCount === 0) {
+      return res.status(400).json({
+        error: "No se pudo actualizar la contraseña. El usuario no fue encontrado o el ID es incorrecto."
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Contraseña establecida exitosamente"
+    });
+
+  } catch (error) {
+    console.error("Error al establecer contraseña:", error);
+    if (error.message.includes("ObjectId")) {
+      return res.status(400).json({ error: "ID de usuario inválido" });
+    }
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
