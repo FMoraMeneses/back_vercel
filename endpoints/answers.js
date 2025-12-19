@@ -443,17 +443,32 @@ router.get("/mail/:mail", async (req, res) => {
       return res.status(404).json({ error: "No se encontraron formularios" });
     }
 
-    const answersProcessed = answers.map(answer => ({
-      _id: answer._id,
-      formId: answer.formId,
-      formTitle: answer.formTitle,
-      trabajador: answer.responses?.["Nombre del trabajador"] || "No especificado",
-      user: answer.user,
-      status: answer.status,
-      createdAt: answer.createdAt,
-      approvedAt: answer.approvedAt,
-      updatedAt: answer.updatedAt
-    }));
+    if (!answers || answers.length === 0) {
+      return res.status(404).json({ error: "No se encontraron formularios para este email" });
+    }
+
+    // Procesar las respuestas en JavaScript
+    const answersProcessed = answers.map(answer => {
+      let trabajador = "No especificado";
+
+      if (answer.responses) {
+        trabajador = answer.responses["Nombre del trabajador"] ||
+          answer.responses["NOMBRE DEL TRABAJADOR"] ||
+          answer.responses["nombre del trabajador"]
+      }
+
+      return {
+        _id: answer._id,
+        formId: answer.formId,
+        formTitle: answer.formTitle,
+        trabajador: trabajador,
+        user: answer.user,
+        status: answer.status,
+        createdAt: answer.createdAt,
+        approvedAt: answer.approvedAt,
+        updatedAt: answer.updatedAt
+      };
+    });
 
     res.json(answersProcessed);
   } catch (err) {
