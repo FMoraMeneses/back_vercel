@@ -82,12 +82,16 @@ async function addNotification(
   if (userId) {
     try {
       // Intentar como ObjectId primero
-      query = { _id: new ObjectId(userId) };
+      if (ObjectId.isValid(userId)) {
+        query = { _id: new ObjectId(userId) };
+      } else {
+        // Si no es ObjectId válido, asumir que es email
+        const mailIndex = createBlindIndex(userId);
+        query = { mail_index: mailIndex };
+      }
     } catch (error) {
-      // Si no es ObjectId válido, asumir que es email
-      // Usar mail_index (hash determinístico del email)
-      const mailIndex = createBlindIndex(userId);
-      query = { mail_index: mailIndex };
+      console.error('Error procesando userId:', error);
+      throw new Error('ID de usuario no válido');
     }
   }
   // Si es por filtro

@@ -4,6 +4,69 @@ const { ObjectId } = require("mongodb");
 const { addNotification } = require("../utils/notificaciones.helper");
 const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
+
+async function obtenerEmailsDestinatarios(db, destinatarios) {
+  let usuarios = [];
+
+  if (destinatarios.tipo === 'todos') {
+    usuarios = await db.collection('usuarios')
+      .find({ estado: 'activo' })
+      .project({ mail: 1, nombre: 1 })
+      .toArray();
+
+  } else if (destinatarios.tipo === 'filtro') {
+    const filtro = destinatarios.filtro || {};
+    const query = { estado: 'activo' };
+    const andConditions = [];
+
+    if (filtro.empresas && filtro.empresas.length > 0) {
+      andConditions.push({ empresa: { $in: filtro.empresas } });
+    }
+    if (filtro.cargos && filtro.cargos.length > 0) {
+      andConditions.push({ cargo: { $in: filtro.cargos } });
+    }
+    if (filtro.roles && filtro.roles.length > 0) {
+      andConditions.push({ rol: { $in: filtro.roles } });
+    }
+
+    if (andConditions.length > 0) {
+      query.$and = andConditions;
+    }
+
+    usuarios = await db.collection('usuarios')
+      .find(query)
+      .project({ mail: 1, nombre: 1 })
+      .toArray();
+
+  } else if (destinatarios.tipo === 'manual') {
+    const objectIds = destinatarios.usuariosManuales
+      .filter(id => ObjectId.isValid(id))
+      .map(id => new ObjectId(id));
+
+    if (objectIds.length > 0) {
+      usuarios = await db.collection('usuarios')
+        .find({ _id: { $in: objectIds } })
+        .project({ mail: 1, nombre: 1 })
+        .toArray();
+    }
+  }
+
+  // Descifrar emails y nombres
+  const usuariosDescifrados = usuarios.map(u => {
+    try {
+      return {
+        email: decrypt(u.mail),
+        nombre: u.nombre ? decrypt(u.nombre) : 'Usuario'
+      };
+    } catch (error) {
+      console.error('Error descifrando usuario:', u._id, error);
+      return null;
+    }
+  }).filter(u => u !== null && u.email);
+
+  return usuariosDescifrados;
+}
+
 // Nuevo endpoint para obtener información del documento por responseId
 router.post('/', async (req, res) => {
   console.log('POST /api/anuncios - Body recibido:', req.body);

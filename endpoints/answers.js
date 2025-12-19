@@ -88,38 +88,34 @@ router.use(express.json({ limit: '4mb' }));
 router.post("/", async (req, res) => {
   try {
     const { formId, user, responses, formTitle, adjuntos = [], mail: correoRespaldo } = req.body;
-    const usuario = user?.nombre;
+    
+    // El usuario que viene del frontend ya debería estar descifrado en su sesión, 
+    // pero para la lógica interna usamos sus datos.
+    const usuario = user?.nombre; 
     const empresa = user?.empresa;
     const userId = user?.uid;
     const token = user?.token;
 
     console.log("=== INICIO GUARDAR RESPUESTA ===");
-    console.log("Cantidad de adjuntos a procesar:", adjuntos.length);
 
     const tokenValido = await validarToken(req.db, token);
     if (!tokenValido.ok) {
       return res.status(401).json({ error: tokenValido.reason });
     }
 
-    const form = await req.db
-      .collection("forms")
-      .findOne({ _id: new ObjectId(formId) });
-
-    if (!form) {
-      return res.status(404).json({ error: "Formulario no encontrado" });
-    }
+    const form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
+    if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
 
     const empresaAutorizada = form.companies?.includes(empresa) || form.companies?.includes("Todas");
     if (!empresaAutorizada) {
-      return res.status(403).json({
-        error: `La empresa ${empresa} no está autorizada para responder este formulario.`,
-      });
+      return res.status(403).json({ error: `La empresa ${empresa} no está autorizada.` });
     }
 
-    // Insertar respuesta principal SIN adjuntos
+    // Insertar respuesta principal. 
+    // Nota: El objeto 'user' aquí se guarda como viene, pero el mail se busca por Blind Index si fuera necesario.
     const result = await req.db.collection("respuestas").insertOne({
       formId,
-      user,
+      user, 
       responses,
       formTitle,
       mail: correoRespaldo,
@@ -127,56 +123,32 @@ router.post("/", async (req, res) => {
       createdAt: new Date()
     });
 
-    console.log("Respuesta principal guardada con ID:", result.insertedId);
-
-    // Crear documento para adjuntos con el formato específico
     if (adjuntos.length > 0) {
-      const documentoAdjuntos = {
+      await req.db.collection("adjuntos").insertOne({
         responseId: result.insertedId,
         submittedAt: new Date().toISOString(),
         adjuntos: []
-      };
-
-      await req.db.collection("adjuntos").insertOne(documentoAdjuntos);
-      console.log("Documento de adjuntos creado (vacío)");
+      });
     }
 
-    // El resto del código (notificaciones, generación de documento, etc.)
-    let resultadoCorreo = { enviado: false };
+    // Enviar correo de respaldo
     if (correoRespaldo && correoRespaldo.trim() !== '') {
-      resultadoCorreo = await enviarCorreoRespaldo(
-        correoRespaldo,
-        formTitle,
-        user,
-        responses,
-        form.questions
-      );
+      await enviarCorreoRespaldo(correoRespaldo, formTitle, user, responses, form.questions);
     }
 
-    await addNotification(req.db, {
-      filtro: { cargo: "RRHH" },
-      titulo: `${usuario} de la empresa ${empresa} generó una solicitud de ${formTitle}`,
-      descripcion: adjuntos.length > 0
-        ? `Incluye ${adjuntos.length} archivo(s) adjunto(s) - Procesando...`
-        : "Puedes revisar los detalles en el panel de respuestas.",
+    // Notificaciones (RRHH y Admin)
+    const notifData = {
+      titulo: `${usuario} de la empresa ${empresa} ha respondido el formulario ${formTitle}`,
+      descripcion: adjuntos.length > 0 ? `Incluye ${adjuntos.length} archivo(s)` : "Revisar en panel.",
       prioridad: 2,
       color: "#bb8900ff",
       icono: "form",
       actionUrl: `/RespuestasForms?id=${result.insertedId}`,
-    });
+    };
+    await addNotification(req.db, { filtro: { cargo: "RRHH" }, ...notifData });
+    await addNotification(req.db, { filtro: { cargo: "admin" }, ...notifData });
 
-    await addNotification(req.db, {
-      filtro: { cargo: "admin" },
-      titulo: `${usuario} de la empresa ${empresa} generó una solicitud de ${formTitle}`,
-      descripcion: adjuntos.length > 0
-        ? `Incluye ${adjuntos.length} archivo(s) adjunto(s) - Procesando...`
-        : "Puedes revisar los detalles en el panel de respuestas.",
-      prioridad: 2,
-      color: "#bb8900ff",
-      icono: "form",
-      actionUrl: `/RespuestasForms?id=${result.insertedId}`,
-    });
-
+    // Notificación al usuario
     await addNotification(req.db, {
       userId,
       titulo: "Formulario completado",
@@ -193,96 +165,52 @@ router.post("/", async (req, res) => {
         empresa: empresa,
         uid: userId,
       }, formId, formTitle);
-      console.log("Documento generado automáticamente:", result.insertedId);
     } catch (error) {
       console.error("Error generando documento:", error.message);
     }
 
-    console.log("=== FIN GUARDAR RESPUESTA PRINCIPAL ===");
-
-    // Retornar el ID para que el frontend pueda enviar los adjuntos
-    res.json({
-      _id: result.insertedId,
-      formId,
-      user,
-      responses,
-      formTitle,
-      mail: correoRespaldo
-    });
+    res.json({ _id: result.insertedId, formId, user, responses, formTitle, mail: correoRespaldo });
 
   } catch (err) {
-    console.error("Error general al guardar respuesta:", err);
     res.status(500).json({ error: "Error al guardar respuesta: " + err.message });
   }
 });
 
 router.post("/admin", async (req, res) => {
   try {
-    const {
-      formId,
-      user: adminUser, // Usuario que realiza la petición (el administrador)
-      responses,
-      formTitle,
-      adjuntos = [],
-      mail: correoRespaldo
-    } = req.body;
+    const { formId, user: adminUser, responses, formTitle, adjuntos = [], mail: correoRespaldo } = req.body;
 
-    // Campos del Destinatario que vienen en el payload de 'responses'
     const destinatarioNombre = responses?.Destinatario;
     const destinatarioEmpresa = responses?.EmpresaDestino;
 
-    // Validación básica del Destinatario
     if (!destinatarioNombre || !destinatarioEmpresa) {
-      return res.status(400).json({ error: "El nombre y la empresa del destinatario son requeridos en las respuestas." });
+      return res.status(400).json({ error: "Destinatario y empresa requeridos." });
     }
 
-    // --- VALIDACIÓN DEL ADMINISTRADOR ---
-    const adminToken = adminUser?.token;
-    console.log("=== INICIO GUARDAR RESPUESTA ADMIN ===");
+    const tokenValido = await validarToken(req.db, adminUser?.token);
+    if (!tokenValido.ok) return res.status(401).json({ error: tokenValido.reason });
 
-    const tokenValido = await validarToken(req.db, adminToken);
-    if (!tokenValido.ok) {
-      return res.status(401).json({ error: tokenValido.reason });
-    }
-
-    // ----------------------------------------------------
-    // --- LÓGICA DE BÚSQUEDA DEL USUARIO DESTINATARIO ---
-    // ----------------------------------------------------
+    // --- BÚSQUEDA PQC DEL USUARIO DESTINATARIO ---
+    // Buscamos por mail_index porque el mail original está cifrado
     const userDestinatario = await req.db.collection("usuarios").findOne({
-      mail: correoRespaldo,
-    }, {
-      projection: {
-        _id: 1,
-        nombre: 1,
-        empresa: 1,
-        mail: 1,
-      }
+      mail_index: createBlindIndex(correoRespaldo),
     });
 
     if (!userDestinatario) {
-      return res.status(404).json({
-        error: `Destinatario no encontrado: ${destinatarioNombre} en ${destinatarioEmpresa}.`
-      });
+      return res.status(404).json({ error: `Destinatario no encontrado con el correo: ${correoRespaldo}` });
     }
 
-    // Construir el objeto 'user' para la respuesta con la estructura correcta
+    // Desciframos los datos para construir el objeto de respuesta correctamente
     const destinatarioUserObject = {
       uid: userDestinatario._id.toString(),
-      nombre: userDestinatario.nombre,
-      empresa: userDestinatario.empresa,
-      mail: userDestinatario.mail,
+      nombre: decrypt(userDestinatario.nombre),
+      empresa: userDestinatario.empresa, // Si empresa no está cifrada
+      mail: correoRespaldo,
     };
 
-    // Continuar con las validaciones del Formulario
-    const form = await req.db
-      .collection("forms")
-      .findOne({ _id: new ObjectId(formId) });
+    const form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
+    if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
 
-    if (!form) {
-      return res.status(404).json({ error: "Formulario no encontrado" });
-    }
-
-    // --- PUNTO CLAVE: INSERCIÓN CON EL DESTINATARIO COMO 'user' ---
     const now = new Date();
     const result = await req.db.collection("respuestas").insertOne({
       formId,
@@ -296,79 +224,45 @@ router.post("/admin", async (req, res) => {
       injectedBy: adminUser?.uid,
     });
 
-    console.log("✅ Solicitud inyectada guardada con ID:", result.insertedId);
-
-    // Lógica de Adjuntos
     if (adjuntos.length > 0) {
-      const documentoAdjuntos = {
+      await req.db.collection("adjuntos").insertOne({
         responseId: result.insertedId,
         submittedAt: now.toISOString(),
         adjuntos: []
-      };
-
-      await req.db.collection("adjuntos").insertOne(documentoAdjuntos);
-      console.log("✅ Documento de adjuntos creado (vacío)");
+      });
     }
 
-    // Lógica de Correo de Respaldo (usando el mail del destinatario, si aplica)
-    let resultadoCorreo = { enviado: false };
-    if (userDestinatario.mail) {
-      resultadoCorreo = await enviarCorreoRespaldo(
-        userDestinatario.mail,
-        formTitle,
-        destinatarioUserObject,
-        responses,
-        form.questions
-      );
+    if (correoRespaldo) {
+      await enviarCorreoRespaldo(correoRespaldo, formTitle, destinatarioUserObject, responses, form.questions);
     }
 
-    // --- NOTIFICACIONES ---
-
-    // 1. Notificación a RRHH/Administradores
+    // Notificaciones
     await addNotification(req.db, {
       filtro: { cargo: "RRHH" },
-      titulo: `Se ha creado una solicitud para ${destinatarioNombre}`,
-      descripcion: `El administrador ${adminUser?.nombre} creó la solicitud "${formTitle}".`,
-      prioridad: 2,
-      color: "#bb8900ff",
-      icono: "form",
+      titulo: `Solicitud creada para ${destinatarioNombre}`,
+      descripcion: `El administrador ${adminUser?.nombre} creó "${formTitle}".`,
+      prioridad: 2, color: "#bb8900ff", icono: "form",
       actionUrl: `/RespuestasForms?id=${result.insertedId}`,
     });
 
-    // 2. Notificación al **Cliente/Destinatario** (usando el uid real)
     await addNotification(req.db, {
       userId: destinatarioUserObject.uid,
       titulo: "Nueva Solicitud Administrativa",
       descripcion: `Tienes una nueva solicitud pendiente: ${formTitle}.`,
-      prioridad: 2,
-      icono: "Warning",
-      color: "#ff8c00ff",
+      prioridad: 2, icono: "Warning", color: "#ff8c00ff",
       actionUrl: `/?id=${result.insertedId}`,
     });
 
-    // Generación de documento
     try {
       await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form.section, destinatarioUserObject, formId, formTitle);
-      console.log("Documento generado automáticamente (Solicitud Inyectada):", result.insertedId);
     } catch (error) {
-      console.error("Error generando documento (Solicitud Inyectada):", error.message);
+      console.error("Error generando documento:", error.message);
     }
 
-    console.log("=== FIN GUARDAR RESPUESTA ADMIN ===");
-
-    // Retornar la respuesta
-    res.json({
-      _id: result.insertedId,
-      formId,
-      user: destinatarioUserObject,
-      responses,
-      formTitle,
-      mail: userDestinatario.mail,
-    });
+    res.json({ _id: result.insertedId, formId, user: destinatarioUserObject, responses, formTitle, mail: correoRespaldo });
 
   } catch (err) {
-    console.error("Error general al guardar respuesta (Admin):", err);
-    res.status(500).json({ error: "Error al guardar respuesta (Admin): " + err.message });
+    res.status(500).json({ error: "Error Admin: " + err.message });
   }
 });
 
@@ -532,57 +426,38 @@ router.get("/", async (req, res) => {
 
 router.get("/mail/:mail", async (req, res) => {
   try {
-    const answers = await req.db
-      .collection("respuestas")
-      .find({ "user.mail": req.params.mail })
-      .project({
-        _id: 1,
-        formId: 1,
-        formTitle: 1,
-        "responses": 1,
-        "user.nombre": 1,
-        "user.empresa": 1,
-        "user.uid": 1,
-        status: 1,
-        createdAt: 1,
-        approvedAt: 1,
-        updatedAt: 1
-      })
-      .toArray();
+    const cleanMail = req.params.mail.toLowerCase().trim();
+    // No buscamos por "user.mail" directo porque ese valor en respuestas 
+    // podría ser plano o cifrado según cuando se guardó, pero el Blind Index 
+    // en la colección de usuarios es nuestra fuente de verdad.
+    
+    // Primero validamos si el usuario existe para obtener su UID
+    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(cleanMail) });
+    
+    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    console.log("Consulta para mail:", req.params.mail);
+    // Ahora buscamos en respuestas por el UID del usuario (que es inmutable)
+    const answers = await req.db.collection("respuestas").find({ "user.uid": user._id.toString() }).toArray();
 
     if (!answers || answers.length === 0) {
-      return res.status(404).json({ error: "No se encontraron formularios para este email" });
+      return res.status(404).json({ error: "No se encontraron formularios" });
     }
 
-    // Procesar las respuestas en JavaScript
-    const answersProcessed = answers.map(answer => {
-      let trabajador = "No especificado";
-
-      if (answer.responses) {
-        trabajador = answer.responses["Nombre del trabajador"] ||
-          answer.responses["NOMBRE DEL TRABAJADOR"] ||
-          answer.responses["nombre del trabajador"]
-      }
-
-      return {
-        _id: answer._id,
-        formId: answer.formId,
-        formTitle: answer.formTitle,
-        trabajador: trabajador,
-        user: answer.user,
-        status: answer.status,
-        createdAt: answer.createdAt,
-        approvedAt: answer.approvedAt,
-        updatedAt: answer.updatedAt
-      };
-    });
+    const answersProcessed = answers.map(answer => ({
+      _id: answer._id,
+      formId: answer.formId,
+      formTitle: answer.formTitle,
+      trabajador: answer.responses?.["Nombre del trabajador"] || "No especificado",
+      user: answer.user,
+      status: answer.status,
+      createdAt: answer.createdAt,
+      approvedAt: answer.approvedAt,
+      updatedAt: answer.updatedAt
+    }));
 
     res.json(answersProcessed);
   } catch (err) {
-    console.error("Error en /mail/:mail:", err);
-    res.status(500).json({ error: "Error al obtener formularios por email" });
+    res.status(500).json({ error: "Error al obtener por email" });
   }
 });
 
@@ -824,75 +699,41 @@ router.get("/:formId/chat/", async (req, res) => {
 
 //enviar mensaje
 router.post("/chat", async (req, res) => {
-  try {
-    const { formId, autor, mensaje, admin } = req.body;
-
-    if (!autor || !mensaje || !formId) {
-      return res.status(400).json({ error: "Faltan campos: formId, autor o mensaje" });
+    try {
+      const { formId, autor, mensaje, admin } = req.body;
+      if (!autor || !mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
+  
+      const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
+  
+      let query = ObjectId.isValid(formId) ? { $or: [{ _id: new ObjectId(formId) }, { formId }] } : { formId };
+      const respuesta = await req.db.collection("respuestas").findOne(query);
+      if (!respuesta) return res.status(404).json({ error: "Respuesta no encontrada" });
+  
+      await req.db.collection("respuestas").updateOne({ _id: respuesta._id }, { $push: { mensajes: nuevoMensaje } });
+  
+      if (respuesta?.user?.nombre === autor) {
+        const notifChat = {
+          filtro: { cargo: "RRHH" },
+          titulo: "Nuevo mensaje en formulario",
+          descripcion: `${autor} ha enviado un mensaje.`,
+          icono: "Edit", color: "#45577eff",
+          actionUrl: `/RespuestasForms?id=${respuesta._id}`,
+        };
+        await addNotification(req.db, notifChat);
+        await addNotification(req.db, { ...notifChat, filtro: { cargo: "admin" } });
+      } else {
+        await addNotification(req.db, {
+          userId: respuesta.user.uid,
+          titulo: "Nuevo mensaje recibido",
+          descripcion: `${autor} le ha enviado un mensaje.`,
+          icono: "MessageCircle", color: "#45577eff",
+          actionUrl: `/?id=${respuesta._id}`,
+        });
+      }
+      res.json({ message: "Mensaje enviado", data: nuevoMensaje });
+    } catch (err) {
+      res.status(500).json({ error: "Error en chat" });
     }
-
-    const nuevoMensaje = {
-      autor,
-      mensaje,
-      leido: false,
-      fecha: new Date(),
-      admin: admin || false
-    };
-
-    let query;
-    if (ObjectId.isValid(formId)) {
-      query = { $or: [{ _id: new ObjectId(formId) }, { formId }] };
-    } else {
-      query = { formId };
-    }
-
-    const respuesta = await req.db.collection("respuestas").findOne(query);
-    if (!respuesta) {
-      return res.status(404).json({ error: "No se encontró la respuesta para agregar el mensaje" });
-    }
-
-    await req.db.collection("respuestas").updateOne(
-      { _id: respuesta._id },
-      { $push: { mensajes: nuevoMensaje } }
-    );
-
-    if (respuesta?.user?.nombre === autor) {
-      await addNotification(req.db, {
-        filtro: { cargo: "RRHH" },
-        titulo: "Nuevo mensaje en tu formulario",
-        descripcion: `${autor} le ha enviado un mensaje respecto a un formulario.`,
-        icono: "Edit",
-        color: "#45577eff",
-        actionUrl: `/RespuestasForms?id=${respuesta._id}`,
-      });
-
-      await addNotification(req.db, {
-        filtro: { cargo: "admin" },
-        titulo: "Nuevo mensaje en tu formulario",
-        descripcion: `${autor} le ha enviado un mensaje respecto a un formulario.`,
-        icono: "Edit",
-        color: "#45577eff",
-        actionUrl: `/RespuestasForms?id=${respuesta._id}`,
-      });
-    } else {
-      await addNotification(req.db, {
-        userId: respuesta.user.uid,
-        titulo: "Nuevo mensaje recibido",
-        descripcion: `${autor} le ha enviado un mensaje respecto a un formulario.`,
-        icono: "MessageCircle",
-        color: "#45577eff",
-        actionUrl: `/?id=${respuesta._id}`,
-      });
-    }
-
-    res.json({
-      message: "Mensaje agregado correctamente y notificación enviada",
-      data: nuevoMensaje,
-    });
-  } catch (err) {
-    console.error("Error al agregar mensaje:", err);
-    res.status(500).json({ error: "Error al agregar mensaje" });
-  }
 });
 
 router.put("/chat/marcar-leidos", async (req, res) => {
@@ -915,45 +756,28 @@ router.put("/chat/marcar-leidos", async (req, res) => {
 // Subir corrección PDF (se mantiene por compatibilidad)
 router.post("/:id/upload-correction", upload.single('correctedFile'), async (req, res) => {
   try {
-    console.log("Debug: Iniciando upload-correction para ID:", req.params.id);
+    if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
 
-    if (!req.file) {
-      return res.status(400).json({ error: "No se subió ningún archivo" });
-    }
-
-    // 1. Buscar la respuesta para obtener la referencia del usuario al que notificaremos
-    // Asumimos que la colección 'respuestas' tiene un campo 'userId' o 'mail_index'
     const respuesta = await req.db.collection("respuestas").findOne({ _id: new ObjectId(req.params.id) });
-    
-    if (!respuesta) {
-      return res.status(404).json({ error: "Respuesta no encontrada" });
-    }
+    if (!respuesta) return res.status(404).json({ error: "Respuesta no encontrada" });
 
-    // 2. Buscar al usuario para obtener sus datos de contacto (Descifrar para el mail)
-    const user = await req.db.collection("usuarios").findOne({ _id: new ObjectId(respuesta.userId) });
+    // Buscar usuario por el UID guardado en la respuesta
+    const user = await req.db.collection("usuarios").findOne({ _id: new ObjectId(respuesta.user.uid) });
 
     const normalizedFileName = normalizeFilename(req.file.originalname);
 
-    // 3. Actualizar la respuesta en la base de datos
     const result = await req.db.collection("respuestas").updateOne(
       { _id: new ObjectId(req.params.id) },
       {
         $set: {
           hasCorrection: true,
           correctionFileName: normalizedFileName,
-          // Almacenamos el buffer cifrado si consideras que el archivo es sensible
-          // fileData: encrypt(req.file.buffer), 
-          fileData: req.file.buffer, 
+          fileData: req.file.buffer, // Considerar cifrar aquí si el PDF es sensible
           updatedAt: new Date()
         }
       }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "No se pudo actualizar la respuesta" });
-    }
-
-    // 4. Lógica de envío de Correo Electrónico (Si el usuario existe)
     if (user) {
       const userNombre = decrypt(user.nombre);
       const userMail = decrypt(user.mail);
@@ -962,42 +786,19 @@ router.post("/:id/upload-correction", upload.single('correctedFile'), async (req
           <div style="font-family: sans-serif; color: #333;">
               <h2 style="color: #f97316;">Nueva Corrección Disponible</h2>
               <p>Hola <strong>${userNombre}</strong>,</p>
-              <p>Te informamos que se ha subido una nueva corrección para tu solicitud en la plataforma <strong>Acciona</strong>.</p>
-              <p><strong>Detalles del archivo:</strong></p>
-              <ul>
-                  <li>Archivo: ${normalizedFileName}</li>
-                  <li>Fecha: ${new Date().toLocaleString()}</li>
-              </ul>
-              <p>Puedes revisar los detalles e instrucciones ingresando a tu panel de usuario.</p>
-              <br>
-              <p>Saludos cordiales,</p>
-              <p>El equipo de Acciona</p>
-          </div>
-      `;
+              <p>Se ha subido una corrección para: <strong>${respuesta.formTitle}</strong>.</p>
+              <p>Archivo: ${normalizedFileName}</p>
+              <p>Saludos, Equipo Acciona</p>
+          </div>`;
 
       try {
-        await sendEmail({
-            to: userMail,
-            subject: 'Notificación de Corrección - Acciona',
-            html: htmlContent
-        });
-        console.log("Debug: Correo de notificación enviado a:", userMail);
-      } catch (mailErr) {
-        console.error("Error enviando correo de corrección:", mailErr);
-        // No bloqueamos la respuesta del cliente si el correo falla
-      }
+        await sendEmail({ to: userMail, subject: 'Notificación de Corrección', html: htmlContent });
+      } catch (e) { console.error("Error mail:", e); }
     }
 
-    res.json({
-      success: true,
-      message: "Corrección subida y notificación enviada correctamente",
-      fileName: normalizedFileName,
-      fileSize: req.file.size
-    });
-
+    res.json({ success: true, message: "Corrección subida", fileName: normalizedFileName });
   } catch (err) {
-    console.error("Error subiendo corrección:", err);
-    res.status(500).json({ error: "Error interno al procesar la corrección" });
+    res.status(500).json({ error: "Error subiendo corrección" });
   }
 });
 
