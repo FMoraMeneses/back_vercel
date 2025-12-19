@@ -8,15 +8,15 @@ const { createBlindIndex, verifyPassword, decrypt } = require("../utils/segurida
 // MODIFICAR el endpoint POST para no almacenar en BD
 router.post('/', async (req, res) => {
   console.log('POST /api/anuncios - Body recibido:', req.body);
-  
+
   try {
     const db = req.db;
-    
+
     if (!db) {
       console.error('No hay conexión a la base de datos');
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error de conexión a la base de datos' 
+      return res.status(500).json({
+        success: false,
+        error: 'Error de conexión a la base de datos'
       });
     }
 
@@ -33,17 +33,17 @@ router.post('/', async (req, res) => {
     // Validaciones básicas
     if (!titulo || !descripcion) {
       console.log('Validación fallida: título o descripción faltante');
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Título y descripción son requeridos' 
+      return res.status(400).json({
+        success: false,
+        error: 'Título y descripción son requeridos'
       });
     }
 
     if (!destinatarios || !destinatarios.tipo) {
       console.log('Validación fallida: destinatarios faltante');
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Debe especificar destinatarios' 
+      return res.status(400).json({
+        success: false,
+        error: 'Debe especificar destinatarios'
       });
     }
 
@@ -55,7 +55,7 @@ router.post('/', async (req, res) => {
     // ENVIAR SEGÚN TIPO DE DESTINATARIOS (sin almacenar en BD)
     if (destinatarios.tipo === 'todos') {
       console.log('📨 Enviando a TODOS los usuarios activos');
-      
+
       resultadoEnvio = await addNotification(db, {
         filtro: { estado: 'activo' },
         titulo,
@@ -70,28 +70,28 @@ router.post('/', async (req, res) => {
 
     } else if (destinatarios.tipo === 'filtro') {
       console.log('📨 Enviando por FILTROS:', destinatarios.filtro);
-      
+
       const filtro = destinatarios.filtro || {};
       const condicionesFiltro = { estado: 'activo' };
-      
-      const orConditions = [];
-      
+
+      const andConditions = [];
+
       if (filtro.empresas && filtro.empresas.length > 0) {
-        orConditions.push({ empresa: { $in: filtro.empresas } });
+        andConditions.push({ empresa: { $in: filtro.empresas } });
       }
-      
+
       if (filtro.cargos && filtro.cargos.length > 0) {
-        orConditions.push({ cargo: { $in: filtro.cargos } });
+        andConditions.push({ cargo: { $in: filtro.cargos } });
       }
-      
+
       if (filtro.roles && filtro.roles.length > 0) {
-        orConditions.push({ rol: { $in: filtro.roles } });
+        andConditions.push({ rol: { $in: filtro.roles } });
       }
-      
-      if (orConditions.length > 0) {
-        condicionesFiltro.$or = orConditions;
+
+      if (andConditions.length > 0) {
+        condicionesFiltro.$and = andConditions;
       }
-      
+
       console.log('🔍 Filtro construido:', condicionesFiltro);
 
       resultadoEnvio = await addNotification(db, {
@@ -108,11 +108,11 @@ router.post('/', async (req, res) => {
 
     } else if (destinatarios.tipo === 'manual') {
       console.log('Enviando a usuarios MANUALES:', destinatarios.usuariosManuales);
-      
+
       if (!destinatarios.usuariosManuales || destinatarios.usuariosManuales.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Debe seleccionar al menos un destinatario' 
+        return res.status(400).json({
+          success: false,
+          error: 'Debe seleccionar al menos un destinatario'
         });
       }
 
@@ -123,7 +123,7 @@ router.post('/', async (req, res) => {
       for (const userId of destinatarios.usuariosManuales) {
         try {
           console.log(`Enviando a usuario: ${userId}`);
-          
+
           await addNotification(db, {
             userId: userId,
             titulo,
@@ -133,10 +133,10 @@ router.post('/', async (req, res) => {
             icono,
             actionUrl
           });
-          
+
           totalEnviados++;
           console.log(`Enviado a ${userId}`);
-          
+
         } catch (error) {
           totalErrores++;
           erroresDetalle.push({
@@ -178,11 +178,11 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('ERROR CRÍTICO en POST /api/anuncios:', error);
     console.error('Stack trace:', error.stack);
-    
-    res.status(500).json({ 
-      success: false, 
+
+    res.status(500).json({
+      success: false,
       error: 'Error interno del servidor',
-      detalle: error.message 
+      detalle: error.message
     });
   }
 });
@@ -190,22 +190,22 @@ router.post('/', async (req, res) => {
 // MODIFICAR el GET para devolver array vacío (ya que no se almacenan)
 router.get('/', async (req, res) => {
   console.log('GET /api/anuncios - Sin almacenamiento histórico');
-  
+
   try {
     // Devolver array vacío ya que no se almacenan anuncios
     const respuesta = {
       success: true,
       data: []
     };
-    
+
     res.json(respuesta);
-    
+
   } catch (error) {
     console.error('ERROR en GET /api/anuncios:', error);
-    
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -213,8 +213,8 @@ router.get('/', async (req, res) => {
 // Ruta de prueba simple
 router.get('/test', (req, res) => {
   console.log('GET /api/anuncios/test - Prueba de conexión');
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'Endpoint de anuncios funcionando',
     timestamp: new Date().toISOString()
   });
