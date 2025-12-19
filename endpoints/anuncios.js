@@ -1,4 +1,3 @@
-// endpoints/anuncios.js - VERSIÓN ANTERIOR (SIN ENVÍO DE CORREOS)
 const express = require("express");
 const router = express.Router();
 const { ObjectId } = require("mongodb");
@@ -30,7 +29,6 @@ router.post('/', async (req, res) => {
 
     // Validaciones básicas
     if (!titulo || !descripcion) {
-      console.log('Validación fallida: título o descripción faltante');
       return res.status(400).json({ 
         success: false, 
         error: 'Título y descripción son requeridos' 
@@ -38,19 +36,18 @@ router.post('/', async (req, res) => {
     }
 
     if (!destinatarios || !destinatarios.tipo) {
-      console.log('Validación fallida: destinatarios faltante');
       return res.status(400).json({ 
         success: false, 
         error: 'Debe especificar destinatarios' 
       });
     }
 
-    console.log('Validaciones pasadas, procesando destinatarios tipo:', destinatarios.tipo);
+    console.log('Procesando anuncio para:', destinatarios.tipo);
 
     let resultadoEnvio;
     const fechaEnvio = new Date();
 
-    // ENVIAR SEGÚN TIPO DE DESTINATARIOS
+    // ENVIAR NOTIFICACIONES SEGÚN TIPO DE DESTINATARIOS
     if (destinatarios.tipo === 'todos') {
       console.log('Enviando a TODOS los usuarios activos');
       
@@ -63,24 +60,19 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
-      console.log('Notificación enviada a todos:', resultadoEnvio);
-
     } else if (destinatarios.tipo === 'filtro') {
       console.log('Enviando por FILTROS:', destinatarios.filtro);
       
       const filtro = destinatarios.filtro || {};
       const condicionesFiltro = { estado: 'activo' };
-      
       const andConditions = [];
       
       if (filtro.empresas && filtro.empresas.length > 0) {
         andConditions.push({ empresa: { $in: filtro.empresas } });
       }
-      
       if (filtro.cargos && filtro.cargos.length > 0) {
         andConditions.push({ cargo: { $in: filtro.cargos } });
       }
-      
       if (filtro.roles && filtro.roles.length > 0) {
         andConditions.push({ rol: { $in: filtro.roles } });
       }
@@ -88,8 +80,6 @@ router.post('/', async (req, res) => {
       if (andConditions.length > 0) {
         condicionesFiltro.$and = andConditions;
       }
-      
-      console.log('Filtro construido:', condicionesFiltro);
 
       resultadoEnvio = await addNotification(db, {
         filtro: condicionesFiltro,
@@ -99,8 +89,6 @@ router.post('/', async (req, res) => {
         color,
         actionUrl
       });
-
-      console.log('Notificación enviada por filtro:', resultadoEnvio);
 
     } else if (destinatarios.tipo === 'manual') {
       console.log('Enviando a usuarios MANUALES:', destinatarios.usuariosManuales);
@@ -130,8 +118,6 @@ router.post('/', async (req, res) => {
           });
           
           totalEnviados++;
-          console.log(`Enviado a ${userId}`);
-          
         } catch (error) {
           totalErrores++;
           erroresDetalle.push({
@@ -147,20 +133,17 @@ router.post('/', async (req, res) => {
         errores: totalErrores,
         erroresDetalle
       };
-
-      console.log(`Total manual: ${totalEnviados} enviados, ${totalErrores} errores`);
     } else {
-      console.log('Tipo de destinatario no válido:', destinatarios.tipo);
       return res.status(400).json({ 
         success: false, 
         error: 'Tipo de destinatario no válido' 
       });
     }
 
-    // RESPONDER AL FRONTEND
+    // RESPONDER
     const respuesta = {
       success: true,
-      message: `Anuncio enviado exitosamente a ${resultadoEnvio.modificados || 0} usuario(s)`,
+      message: `Anuncio enviado a ${resultadoEnvio.modificados || 0} usuario(s)`,
       data: {
         titulo,
         fechaEnvio,
@@ -169,12 +152,11 @@ router.post('/', async (req, res) => {
       }
     };
 
-    console.log('Enviando respuesta al frontend:', respuesta);
+    console.log('Respuesta:', respuesta.message);
     res.json(respuesta);
 
   } catch (error) {
-    console.error('ERROR CRÍTICO en POST /api/anuncios:', error);
-    console.error('Stack trace:', error.stack);
+    console.error('ERROR en POST /api/anuncios:', error);
     
     res.status(500).json({ 
       success: false, 
@@ -184,37 +166,14 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/anuncios - Listar anuncios enviados
+// GET /api/anuncios - Listar anuncios (vacío)
 router.get('/', async (req, res) => {
-  console.log('GET /api/anuncios - Sin almacenamiento histórico');
-  
-  try {
-    // Devolver array vacío ya que no se almacenan anuncios
-    const respuesta = {
-      success: true,
-      data: []
-    };
-    
-    res.json(respuesta);
-    
-  } catch (error) {
-    console.error('ERROR en GET /api/anuncios:', error);
-    
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
+  res.json({ success: true, data: [] });
 });
 
-// Ruta de prueba simple
+// Test
 router.get('/test', (req, res) => {
-  console.log('GET /api/anuncios/test - Prueba de conexión');
-  res.json({ 
-    success: true, 
-    message: 'Endpoint de anuncios funcionando',
-    timestamp: new Date().toISOString()
-  });
+  res.json({ success: true, message: 'Endpoint funcionando' });
 });
 
 module.exports = router;
