@@ -4,70 +4,8 @@ const { ObjectId } = require("mongodb");
 const { addNotification } = require("../utils/notificaciones.helper");
 const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
-
-async function obtenerEmailsDestinatarios(db, destinatarios) {
-  let usuarios = [];
-
-  if (destinatarios.tipo === 'todos') {
-    usuarios = await db.collection('usuarios')
-      .find({ estado: 'activo' })
-      .project({ mail: 1, nombre: 1 })
-      .toArray();
-
-  } else if (destinatarios.tipo === 'filtro') {
-    const filtro = destinatarios.filtro || {};
-    const query = { estado: 'activo' };
-    const andConditions = [];
-
-    if (filtro.empresas && filtro.empresas.length > 0) {
-      andConditions.push({ empresa: { $in: filtro.empresas } });
-    }
-    if (filtro.cargos && filtro.cargos.length > 0) {
-      andConditions.push({ cargo: { $in: filtro.cargos } });
-    }
-    if (filtro.roles && filtro.roles.length > 0) {
-      andConditions.push({ rol: { $in: filtro.roles } });
-    }
-
-    if (andConditions.length > 0) {
-      query.$and = andConditions;
-    }
-
-    usuarios = await db.collection('usuarios')
-      .find(query)
-      .project({ mail: 1, nombre: 1 })
-      .toArray();
-
-  } else if (destinatarios.tipo === 'manual') {
-    const objectIds = destinatarios.usuariosManuales
-      .filter(id => ObjectId.isValid(id))
-      .map(id => new ObjectId(id));
-
-    if (objectIds.length > 0) {
-      usuarios = await db.collection('usuarios')
-        .find({ _id: { $in: objectIds } })
-        .project({ mail: 1, nombre: 1 })
-        .toArray();
-    }
-  }
-
-  // Descifrar emails y nombres
-  const usuariosDescifrados = usuarios.map(u => {
-    try {
-      return {
-        email: decrypt(u.mail),
-        nombre: u.nombre ? decrypt(u.nombre) : 'Usuario'
-      };
-    } catch (error) {
-      console.error('Error descifrando usuario:', u._id, error);
-      return null;
-    }
-  }).filter(u => u !== null && u.email);
-
-  return usuariosDescifrados;
-}
-
 // Nuevo endpoint para obtener información del documento por responseId
+// MODIFICAR el endpoint POST para no almacenar en BD
 router.post('/', async (req, res) => {
   console.log('POST /api/anuncios - Body recibido:', req.body);
 
@@ -87,19 +25,10 @@ router.post('/', async (req, res) => {
       descripcion,
       prioridad = 1,
       color = '#f5872dff',
+      icono = 'paper',
       actionUrl = null,
-      destinatarios,
-      enviarNotificacion = true, // Por defecto true para compatibilidad
-      enviarCorreo = false
+      destinatarios
     } = req.body;
-
-    // Validación: al menos un método debe estar seleccionado
-    if (enviarNotificacion === false && !enviarCorreo) {
-      return res.status(400).json({
-        success: false,
-        error: 'Debe seleccionar al menos un método de envío (notificación o correo)'
-      });
-    }
 
     // Validaciones básicas
     if (!titulo || !descripcion) {
@@ -118,142 +47,128 @@ router.post('/', async (req, res) => {
       });
     }
 
-    console.log('Métodos seleccionados:', {
-      notificacion: enviarNotificacion,
-      correo: enviarCorreo
-    });
+    console.log('Validaciones pasadas, procesando destinatarios tipo:', destinatarios.tipo);
 
-    let resultadoEnvio = { modificados: 0, errores: 0 };
+    let resultadoEnvio;
     const fechaEnvio = new Date();
-    let usuariosParaCorreo = [];
 
-    // 1. ENVIAR NOTIFICACIONES (si está seleccionado)
-    if (enviarNotificacion !== false) {
-      console.log('📨 Procesando envío de notificaciones...');
+    // ENVIAR SEGÚN TIPO DE DESTINATARIOS (sin almacenar en BD)
+    if (destinatarios.tipo === 'todos') {
+      console.log('📨 Enviando a TODOS los usuarios activos');
 
-      if (destinatarios.tipo === 'todos') {
-        console.log('Enviando notificaciones a TODOS los usuarios activos');
+      resultadoEnvio = await addNotification(db, {
+        filtro: { estado: 'activo' },
+        titulo,
+        descripcion,
+        prioridad,
+        color,
+        icono,
+        actionUrl
+      });
 
-        const resultadoNotificacion = await addNotification(db, {
-          filtro: { estado: 'activo' },
-          titulo,
-          descripcion,
-          prioridad,
-          color,
-          actionUrl
+      console.log('Notificación enviada a todos:', resultadoEnvio);
+
+    } else if (destinatarios.tipo === 'filtro') {
+      console.log('📨 Enviando por FILTROS:', destinatarios.filtro);
+
+      const filtro = destinatarios.filtro || {};
+      const condicionesFiltro = { estado: 'activo' };
+
+      const andConditions = [];
+
+      if (filtro.empresas && filtro.empresas.length > 0) {
+        andConditions.push({ empresa: { $in: filtro.empresas } });
+      }
+
+      if (filtro.cargos && filtro.cargos.length > 0) {
+        andConditions.push({ cargo: { $in: filtro.cargos } });
+      }
+
+      if (filtro.roles && filtro.roles.length > 0) {
+        andConditions.push({ rol: { $in: filtro.roles } });
+      }
+
+      if (andConditions.length > 0) {
+        condicionesFiltro.$and = andConditions;
+      }
+
+      console.log('🔍 Filtro construido:', condicionesFiltro);
+
+      resultadoEnvio = await addNotification(db, {
+        filtro: condicionesFiltro,
+        titulo,
+        descripcion,
+        prioridad,
+        color,
+        icono,
+        actionUrl
+      });
+
+      console.log('Notificación enviada por filtro:', resultadoEnvio);
+
+    } else if (destinatarios.tipo === 'manual') {
+      console.log('Enviando a usuarios MANUALES:', destinatarios.usuariosManuales);
+
+      if (!destinatarios.usuariosManuales || destinatarios.usuariosManuales.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Debe seleccionar al menos un destinatario'
         });
-
-        resultadoEnvio.modificados = resultadoNotificacion.modifiedCount || 0;
-
-        // Obtener usuarios para correo si también se enviará por correo
-        if (enviarCorreo) {
-          usuariosParaCorreo = await db.collection('usuarios')
-            .find({ estado: 'activo' })
-            .project({ mail: 1 })
-            .toArray();
-        }
-
-      } else if (destinatarios.tipo === 'filtro') {
-        // ... (mantener lógica existente de filtros)
-        // IMPORTANTE: Dentro de cada caso, si enviarCorreo es true,
-        // debes guardar los usuarios encontrados en usuariosParaCorreo
-
-      } else if (destinatarios.tipo === 'manual') {
-        // ... (mantener lógica existente de manual)
-        // IMPORTANTE: Similar a los casos anteriores
       }
 
-      console.log('Resultado notificaciones:', resultadoEnvio);
-    }
+      let totalEnviados = 0;
+      let totalErrores = 0;
+      const erroresDetalle = [];
 
-    // 2. ENVIAR CORREOS (si está seleccionado)
-    let resultadoCorreos = { enviados: 0, errores: 0 };
-    if (enviarCorreo && usuariosParaCorreo.length > 0) {
-      console.log('📧 Procesando envío de correos...');
-
-      // Crear HTML del correo
-      const htmlCorreo = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background-color: ${color}; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0;">${titulo}</h1>
-          </div>
-          <div style="padding: 20px; background-color: #f9f9f9; border-radius: 0 0 8px 8px;">
-            <p style="font-size: 16px; line-height: 1.6; color: #333;">
-              ${descripcion.replace(/\n/g, '<br>')}
-            </p>
-            ${actionUrl ? `
-            <div style="margin-top: 20px;">
-              <a href="${actionUrl}" style="display: inline-block; background-color: ${color}; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
-                Ver más detalles
-              </a>
-            </div>
-            ` : ''}
-            <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-            <p style="font-size: 12px; color: #666;">
-              Este es un mensaje automático. Por favor, no responda a este correo.
-            </p>
-          </div>
-        </div>
-      `;
-
-      // Enviar correos en lotes (para no sobrecargar)
-      const lotes = [];
-      for (let i = 0; i < usuariosParaCorreo.length; i += 10) {
-        lotes.push(usuariosParaCorreo.slice(i, i + 10));
-      }
-
-      for (const lote of lotes) {
+      for (const userId of destinatarios.usuariosManuales) {
         try {
-          const emails = lote.map(u => u.mail).filter(email => email);
+          console.log(`Enviando a usuario: ${userId}`);
 
-          const respuesta = await fetch('https://back-vercel-iota.vercel.app/api/mail/send', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              accessKey: process.env.MAIL_KEY,
-              to: emails,
-              subject: `[Anuncio] ${titulo}`,
-              html: htmlCorreo,
-              from: 'notificaciones@tuempresa.cl'
-            })
+          await addNotification(db, {
+            userId: userId,
+            titulo,
+            descripcion,
+            prioridad,
+            color,
+            icono,
+            actionUrl
           });
 
-          if (respuesta.ok) {
-            resultadoCorreos.enviados += emails.length;
-            console.log(`Correo enviado a ${emails.length} usuarios`);
-          } else {
-            resultadoCorreos.errores += emails.length;
-            console.error('Error enviando correo:', await respuesta.text());
-          }
+          totalEnviados++;
+          console.log(`Enviado a ${userId}`);
+
         } catch (error) {
-          resultadoCorreos.errores += lote.length;
-          console.error('Error en lote de correos:', error);
+          totalErrores++;
+          erroresDetalle.push({
+            userId,
+            error: error.message
+          });
+          console.error(`Error al enviar a ${userId}:`, error);
         }
       }
 
-      console.log('Resultado correos:', resultadoCorreos);
+      resultadoEnvio = {
+        modifiedCount: totalEnviados,
+        errores: totalErrores,
+        erroresDetalle
+      };
+
+      console.log(`Total manual: ${totalEnviados} enviados, ${totalErrores} errores`);
     }
 
-    // 3. RESPONDER AL FRONTEND
-    const mensajes = [];
-    if (enviarNotificacion !== false) {
-      mensajes.push(`Notificaciones enviadas a ${resultadoEnvio.modificados} usuario(s)`);
-    }
-    if (enviarCorreo) {
-      mensajes.push(`Correos enviados a ${resultadoCorreos.enviados} usuario(s)`);
-    }
+    // ✅ REMOVER: No guardar en colección 'anuncios'
+    // const anuncioRegistro = { ... }; // Eliminar todo este bloque
+    // const insertResult = await db.collection('anuncios').insertOne(anuncioRegistro);
 
+    // ✅ RESPONDER sin ID de BD
     const respuesta = {
       success: true,
-      message: mensajes.join(' y '),
+      message: `Notificación enviada exitosamente a ${resultadoEnvio?.modifiedCount || 0} usuario(s)`,
       data: {
         titulo,
         fechaEnvio,
-        notificacionesEnviadas: enviarNotificacion !== false ? resultadoEnvio.modificados : 0,
-        correosEnviados: enviarCorreo ? resultadoCorreos.enviados : 0,
-        totalErrores: (resultadoEnvio.errores || 0) + (resultadoCorreos.errores || 0)
+        destinatariosEnviados: resultadoEnvio?.modifiedCount || 0,
+        errores: resultadoEnvio?.errores || 0
       }
     };
 
