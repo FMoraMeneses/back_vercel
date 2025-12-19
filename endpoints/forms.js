@@ -1,10 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const { ObjectId } = require("mongodb");
+const { createBlindIndex } = require("../utils/seguridad.helper");
 
 router.use(express.json({ limit: '4mb' }));
 
-// Crear un formulario
 // Crear o actualizar un formulario
 router.post("/", async (req, res) => {
   try {
@@ -38,7 +38,6 @@ router.post("/", async (req, res) => {
         createdAt: new Date()
       });
 
-      // Para insertOne, construimos la respuesta manualmente
       res.status(201).json({
         _id: result.insertedId,
         ...formData
@@ -88,29 +87,30 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-//Filtrado de forms por seccion y empresa en web clientes
+//Filtrado de forms por seccion y empresa en web clientes (ADAPTADO A SEGURIDAD PQC)
 router.get("/section/:section/:mail", async (req, res) => {
   try {
     const { section, mail } = req.params;
 
-    // 1. Buscar la empresa asociada al usuario
-    const user = await req.db.collection("usuarios").findOne({ mail });
+    // 1. Buscar la empresa asociada al usuario usando BLIND INDEX
+    // El mail en la base de datos está cifrado, por lo que buscamos por su hash SHA-256 indexado
+    const user = await req.db.collection("usuarios").findOne({ 
+      mail_index: createBlindIndex(mail) 
+    });
+
     if (!user || !user.empresa) {
       return res.status(404).json({ error: "Usuario o empresa no encontrados" });
     }
 
-    const empresaUsuario = user.empresa; // Ejemplo: "acciona"
+    const empresaUsuario = user.empresa; 
 
     // 2. Definir la consulta de filtrado
     const query = {
-      // Condición estricta: debe pertenecer a la sección indicada
       section: section,
-      status: "publicado", // Condición estricta: debe estar publicado
-
-      // Condición OR: el campo 'companies' debe coincidir con la empresa O con "Todas"
+      status: "publicado", 
       $or: [
-        { companies: empresaUsuario }, // Condición A: La empresa coincide exactamente
-        { companies: "Todas" }         // Condición B: Es un formulario público
+        { companies: empresaUsuario }, 
+        { companies: "Todas" }         
       ],
     };
 
@@ -120,7 +120,7 @@ router.get("/section/:section/:mail", async (req, res) => {
       .find(query)
       .toArray();
 
-    if (!forms || forms.length === 0) { // Importante: Verificar si el array está vacío
+    if (!forms || forms.length === 0) { 
       return res.status(404).json({
         error: `No se encontraron formularios para la sección "${section}" y la empresa "${empresaUsuario}"`,
       });
@@ -223,6 +223,5 @@ router.post("/respuestas", async (req, res) => {
     res.status(500).json({ error: "Error al guardar respuesta" });
   }
 });
-
 
 module.exports = router;
