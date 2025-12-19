@@ -1,4 +1,4 @@
-// routes/notificaciones.js - VERSIÓN ACTUALIZADA CON BLIND INDEXES
+// routes/notificaciones.js - VERSIÓN CORREGIDA
 const express = require("express");
 const router = express.Router();
 const { ObjectId } = require("mongodb");
@@ -44,15 +44,14 @@ router.post("/", async (req, res) => {
 // Listar notificaciones de un usuario
 router.get("/:nombre", async (req, res) => {
   try {
-    const emailBlindIndex = createBlindIndex(req.params.nombre);
-
+    const mailIndex = createBlindIndex(req.params.nombre);
+    
     const usuario = await req.db
       .collection("usuarios")
-      .findOne({ emailBlindIndex: emailBlindIndex }, {
-        projection: {
-          notificaciones: 1,
-          mail: 1
-        }
+      .findOne({ mail_index: mailIndex }, { 
+        projection: { 
+          notificaciones: 1
+        } 
       });
 
     if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
@@ -67,12 +66,21 @@ router.get("/:nombre", async (req, res) => {
 // Marcar una notificación como leída
 router.put("/:userId/:notiId/leido", async (req, res) => {
   try {
-    const emailBlindIndex = createBlindIndex(req.params.userId);
-
+    let query;
+    
+    try {
+      // Intentar como ObjectId
+      query = { _id: new ObjectId(req.params.userId) };
+    } catch (error) {
+      // Si no es ObjectId, asumir email y usar mail_index
+      const mailIndex = createBlindIndex(req.params.userId);
+      query = { mail_index: mailIndex };
+    }
+    
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      {
-        emailBlindIndex: emailBlindIndex,
-        "notificaciones.id": req.params.notiId
+      { 
+        ...query,
+        "notificaciones.id": req.params.notiId 
       },
       { $set: { "notificaciones.$.leido": true } },
       { returnDocument: "after" }
@@ -81,9 +89,9 @@ router.put("/:userId/:notiId/leido", async (req, res) => {
     if (!result.value)
       return res.status(404).json({ error: "Usuario o notificación no encontrada" });
 
-    res.json({
-      message: "Notificación marcada como leída",
-      usuario: result.value
+    res.json({ 
+      message: "Notificación marcada como leída", 
+      usuario: result.value 
     });
   } catch (err) {
     console.error(err);
@@ -94,23 +102,23 @@ router.put("/:userId/:notiId/leido", async (req, res) => {
 // Eliminar una notificación
 router.delete("/:mail/:notiId", async (req, res) => {
   try {
-    const emailBlindIndex = createBlindIndex(req.params.mail);
-
+    const mailIndex = createBlindIndex(req.params.mail);
+    
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      { emailBlindIndex: emailBlindIndex },
+      { mail_index: mailIndex },
       { $pull: { notificaciones: { id: req.params.notiId } } },
       { returnDocument: "after" }
     );
 
     if (!result)
-      return res.status(404).json({
-        error: "Usuario o notificación no encontrada",
-        result: result
+      return res.status(404).json({ 
+        error: "Usuario o notificación no encontrada", 
+        result: result 
       });
 
-    res.json({
-      message: "Notificación eliminada",
-      usuario: result.value
+    res.json({ 
+      message: "Notificación eliminada", 
+      usuario: result.value 
     });
   } catch (err) {
     console.error(err);
@@ -121,10 +129,10 @@ router.delete("/:mail/:notiId", async (req, res) => {
 // Eliminar todas las notificaciones de un usuario
 router.delete("/:mail", async (req, res) => {
   try {
-    const emailBlindIndex = createBlindIndex(req.params.mail);
-
+    const mailIndex = createBlindIndex(req.params.mail);
+    
     const result = await req.db.collection("usuarios").findOneAndUpdate(
-      { emailBlindIndex: emailBlindIndex },
+      { mail_index: mailIndex },
       { $set: { notificaciones: [] } },
       { returnDocument: "after" }
     );
@@ -147,10 +155,10 @@ router.delete("/:mail", async (req, res) => {
 router.put("/:mail/leido-todas", async (req, res) => {
   try {
     const { mail } = req.params;
-    const emailBlindIndex = createBlindIndex(mail);
+    const mailIndex = createBlindIndex(mail);
 
     const result = await req.db.collection("usuarios").updateOne(
-      { emailBlindIndex: emailBlindIndex },
+      { mail_index: mailIndex },
       { $set: { "notificaciones.$[].leido": true } }
     );
 
@@ -168,47 +176,28 @@ router.put("/:mail/leido-todas", async (req, res) => {
   }
 });
 
-// Obtener contador de notificaciones no leídas
+// Obtener contador de notificaciones no leídas - VERSIÓN CORRECTA
 router.get("/:mail/unread-count", async (req, res) => {
   try {
     const { mail } = req.params;
-    console.log("🔍 Buscando notificaciones no leídas para email:", mail);
-
-    const emailBlindIndex = createBlindIndex(mail);
-    console.log("🔑 Blind index generado:", emailBlindIndex);
+    
+    // Usar mail_index (hash del email) para buscar
+    const mailIndex = createBlindIndex(mail);
 
     const usuario = await req.db
       .collection("usuarios")
-      .findOne({
-        emailBlindIndex: emailBlindIndex
-      }, {
-        projection: {
-          notificaciones: 1,
-          mail: 1,
-          nombre: 1,
-          apellido: 1
-        }
+      .findOne({ 
+        mail_index: mailIndex 
+      }, { 
+        projection: { 
+          notificaciones: 1
+        } 
       });
 
-    console.log("📊 Usuario encontrado:", usuario ? "SÍ" : "NO");
-
     if (!usuario) {
-      // DEBUG: Ver qué usuarios existen
-      const todosUsuarios = await req.db.collection("usuarios")
-        .find({}, { projection: { emailBlindIndex: 1, mail: 1, nombre: 1 } })
-        .limit(5)
-        .toArray();
-
-      console.log("📋 Primeros 5 usuarios en BD:", todosUsuarios.map(u => ({
-        emailBlindIndex: u.emailBlindIndex,
-        mail: u.mail,
-        nombre: u.nombre
-      })));
-
-      return res.status(404).json({
+      return res.status(404).json({ 
         error: "Usuario no encontrado",
-        emailBuscado: mail,
-        blindIndexBuscado: emailBlindIndex
+        detalle: `No se encontró usuario con mail_index: ${mailIndex}`
       });
     }
 
@@ -216,14 +205,12 @@ router.get("/:mail/unread-count", async (req, res) => {
       (n) => n.leido === false
     ).length;
 
-    console.log("✅ Notificaciones no leídas:", unreadCount);
-
-    res.json({
+    res.json({ 
       unreadCount,
       totalNotificaciones: usuario.notificaciones ? usuario.notificaciones.length : 0
     });
   } catch (err) {
-    console.error("❌ Error al obtener contador de no leídas:", err);
+    console.error("Error al obtener contador de no leídas:", err);
     res.status(500).json({
       error: "Error al obtener contador de notificaciones no leídas",
       detalles: err.message,

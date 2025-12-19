@@ -1,4 +1,4 @@
-// routes/notificaciones.helper.js
+// routes/notificaciones.helper.js - VERSIÓN CORREGIDA
 const { ObjectId } = require("mongodb");
 const { createBlindIndex } = require("./seguridad.helper");
 
@@ -52,9 +52,10 @@ async function addNotification(
       // Intentar como ObjectId primero
       query = { _id: new ObjectId(userId) };
     } catch (error) {
-      // Si no es ObjectId válido, asumir que es email y usar blind index
-      const emailBlindIndex = createBlindIndex(userId);
-      query = { emailBlindIndex: emailBlindIndex };
+      // Si no es ObjectId válido, asumir que es email
+      // Usar mail_index (hash determinístico del email)
+      const mailIndex = createBlindIndex(userId);
+      query = { mail_index: mailIndex };
     }
   } 
   // Si es por filtro
@@ -73,15 +74,12 @@ async function addNotification(
             const fieldName = key;
             const fieldValues = value.$in;
             
-            const blindIndexField = getBlindIndexFieldName(fieldName);
-            const blindIndexes = fieldValues.map(val => createBlindIndex(val));
-            andConditions.push({ [blindIndexField]: { $in: blindIndexes } });
+            // Para empresa, cargo, rol (NO cifrados) podemos buscar directamente
+            andConditions.push({ [fieldName]: { $in: fieldValues } });
           }
           // Si es búsqueda por igualdad simple
           else if (typeof value === 'string') {
-            const blindIndexField = getBlindIndexFieldName(key);
-            const blindIndexValue = createBlindIndex(value);
-            andConditions.push({ [blindIndexField]: blindIndexValue });
+            andConditions.push({ [key]: value });
           }
         });
       });
@@ -94,26 +92,13 @@ async function addNotification(
         // Manejar diferentes tipos de valores
         if (Array.isArray(value)) {
           // Si es array, usar $in
-          const blindIndexField = getBlindIndexFieldName(key);
-          const blindIndexes = value.map(val => createBlindIndex(val));
-          andConditions.push({ [blindIndexField]: { $in: blindIndexes } });
+          andConditions.push({ [key]: { $in: value } });
         } else if (typeof value === 'string') {
           // Si es string simple, usar igualdad
-          const blindIndexField = getBlindIndexFieldName(key);
-          const blindIndexValue = createBlindIndex(value);
-          andConditions.push({ [blindIndexField]: blindIndexValue });
+          andConditions.push({ [key]: value });
         } else if (value && typeof value === 'object') {
           // Si ya es un operador MongoDB (como $in, $eq, etc.)
-          const blindIndexField = getBlindIndexFieldName(key);
-          
-          // Convertir valores dentro del operador a blind indexes si es necesario
-          if (value.$in && Array.isArray(value.$in)) {
-            const blindIndexes = value.$in.map(val => createBlindIndex(val));
-            andConditions.push({ [blindIndexField]: { $in: blindIndexes } });
-          } else {
-            // Para otros operadores, pasar tal cual (asumiendo que ya son blind indexes)
-            andConditions.push({ [blindIndexField]: value });
-          }
+          andConditions.push({ [key]: value });
         }
       });
     }
@@ -124,38 +109,19 @@ async function addNotification(
     }
   }
 
-  console.log("Query para buscar usuarios:", JSON.stringify(query, null, 2));
+  console.log("🔍 Query para buscar usuarios:", JSON.stringify(query, null, 2));
   
   const result = await db.collection("usuarios").updateMany(query, {
     $push: { notificaciones: notificacion },
   });
   
-  console.log("Resultado de updateMany:", {
+  console.log("📊 Resultado de updateMany:", {
     matchedCount: result.matchedCount,
     modifiedCount: result.modifiedCount,
     acknowledged: result.acknowledged
   });
 
   return { notificacion, modifiedCount: result.modifiedCount };
-}
-
-/**
- * Función helper para obtener el nombre del campo blind index
- */
-function getBlindIndexFieldName(fieldName) {
-  switch(fieldName.toLowerCase()) {
-    case 'empresa':
-      return 'empresaBlindIndex';
-    case 'cargo':
-      return 'cargoBlindIndex';
-    case 'rol':
-      return 'rolBlindIndex';
-    case 'mail':
-    case 'email':
-      return 'emailBlindIndex';
-    default:
-      return `${fieldName}BlindIndex`;
-  }
 }
 
 module.exports = { addNotification };
