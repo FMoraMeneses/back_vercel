@@ -153,12 +153,16 @@ router.get("/:mail", async (req, res) => {
   }
 });
 
+// auth.js - Ruta /full/:mail CORREGIDA
 router.get("/full/:mail", async (req, res) => {
   try {
+    const { mail } = req.params;
+    const mailIndex = createBlindIndex(mail.toLowerCase().trim()); // Crear el hash del email
+
     const usr = await req.db
       .collection("usuarios")
       .findOne({
-        mail: req.params.mail.toLowerCase().trim()
+        mail_index: mailIndex // Buscar por el índice hash, no por el mail cifrado
       }, {
         projection: {
           _id: 1,
@@ -178,8 +182,13 @@ router.get("/full/:mail", async (req, res) => {
       usr.notificaciones = [];
     }
 
+    // Opcional: Descifrar los campos cifrados si es necesario para el frontend
+    usr.nombre = decrypt(usr.nombre);
+    usr.mail = decrypt(usr.mail);
+
     res.json(usr);
   } catch (err) {
+    console.error("Error en /full/:mail:", err);
     res.status(500).json({ error: "Error al obtener Usuario completo" });
   }
 });
