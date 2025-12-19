@@ -15,38 +15,6 @@ const { createBlindIndex } = require("./seguridad.helper");
  * @param {string} [options.icono="paper"] - Icono de referencia
  * @param {string|null} [options.actionUrl=null] - URL o ruta asociada
  */
-
-async function obtenerUsuariosPorFiltro(db, filtro) {
-  const query = { estado: 'activo' };
-  const andConditions = [];
-
-  if (filtro.$and && Array.isArray(filtro.$and)) {
-    filtro.$and.forEach(condition => {
-      Object.keys(condition).forEach(key => {
-        const value = condition[key];
-        if (value.$in && Array.isArray(value.$in)) {
-          andConditions.push({ [key]: { $in: value.$in } });
-        } else if (typeof value === 'string') {
-          andConditions.push({ [key]: value });
-        }
-      });
-    });
-  }
-
-  if (andConditions.length > 0) {
-    query.$and = andConditions;
-  }
-
-  return await db.collection('usuarios')
-    .find(query)
-    .project({
-      mail: 1,
-      nombre: 1,
-      empresa: 1
-    })
-    .toArray();
-}
-
 async function addNotification(
   db,
   {
@@ -77,39 +45,35 @@ async function addNotification(
   };
 
   let query;
-
+  
   // Si es usuario específico
   if (userId) {
     try {
       // Intentar como ObjectId primero
-      if (ObjectId.isValid(userId)) {
-        query = { _id: new ObjectId(userId) };
-      } else {
-        // Si no es ObjectId válido, asumir que es email
-        const mailIndex = createBlindIndex(userId);
-        query = { mail_index: mailIndex };
-      }
+      query = { _id: new ObjectId(userId) };
     } catch (error) {
-      console.error('Error procesando userId:', error);
-      throw new Error('ID de usuario no válido');
+      // Si no es ObjectId válido, asumir que es email
+      // Usar mail_index (hash determinístico del email)
+      const mailIndex = createBlindIndex(userId);
+      query = { mail_index: mailIndex };
     }
-  }
+  } 
   // Si es por filtro
   else if (filtro) {
     query = { estado: 'activo' };
     const andConditions = [];
-
+    
     // CASO 1: Filtro con estructura compleja (desde anuncios.js)
     if (filtro.$and && Array.isArray(filtro.$and)) {
       filtro.$and.forEach(condition => {
         Object.keys(condition).forEach(key => {
           const value = condition[key];
-
+          
           // Si es búsqueda por $in (ej: empresas: ["Empresa A", "Empresa B"])
           if (value.$in && Array.isArray(value.$in)) {
             const fieldName = key;
             const fieldValues = value.$in;
-
+            
             // Para empresa, cargo, rol (NO cifrados) podemos buscar directamente
             andConditions.push({ [fieldName]: { $in: fieldValues } });
           }
@@ -124,7 +88,7 @@ async function addNotification(
     else {
       Object.keys(filtro).forEach(key => {
         const value = filtro[key];
-
+        
         // Manejar diferentes tipos de valores
         if (Array.isArray(value)) {
           // Si es array, usar $in
@@ -138,7 +102,7 @@ async function addNotification(
         }
       });
     }
-
+    
     // Si hay condiciones AND, agregarlas al query
     if (andConditions.length > 0) {
       query.$and = andConditions;
@@ -146,11 +110,11 @@ async function addNotification(
   }
 
   console.log("🔍 Query para buscar usuarios:", JSON.stringify(query, null, 2));
-
+  
   const result = await db.collection("usuarios").updateMany(query, {
     $push: { notificaciones: notificacion },
   });
-
+  
   console.log("📊 Resultado de updateMany:", {
     matchedCount: result.matchedCount,
     modifiedCount: result.modifiedCount,
