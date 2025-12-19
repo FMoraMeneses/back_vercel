@@ -141,14 +141,29 @@ router.get("/solicitud", async (req, res) => {
 
 router.get("/:mail", async (req, res) => {
   try {
+    // 1. Limpiamos el parámetro de entrada
+    const cleanMail = req.params.mail.toLowerCase().trim();
+
+    // 2. Buscamos utilizando el Blind Index (Hash SHA-256)
+    // Esto permite que MongoDB use índices y la respuesta sea instantánea
     const usr = await req.db
       .collection("usuarios")
-      .findOne({ mail: req.params.mail.toLowerCase().trim() });
+      .findOne({ mail_index: createBlindIndex(cleanMail) });
 
-    if (!usr) return res.status(404).json({ error: "Usuario no encontrado" });
+    if (!usr) {
+      return res.status(404).json({ error: "Usuario no encontrado" });
+    }
 
-    res.json({ id: usr._id, empresa: usr.empresa, cargo: usr.cargo });
+    // 3. Retornamos los datos. 
+    // Nota: Si 'empresa' o 'cargo' estuvieran cifrados, deberías usar decrypt() aquí.
+    res.json({
+      id: usr._id,
+      empresa: usr.empresa,
+      cargo: usr.cargo || usr.rol
+    });
+
   } catch (err) {
+    console.error("Error al obtener Usuario por mail:", err);
     res.status(500).json({ error: "Error al obtener Usuario" });
   }
 });
