@@ -155,7 +155,7 @@ router.post("/", async (req, res) => {
 
     await addNotification(req.db, {
       filtro: { cargo: "RRHH" },
-      titulo: `${usuario} de la empresa ${empresa} ha respondido el formulario ${formTitle}`,
+      titulo: `${usuario} de la empresa ${empresa} generó una solicitud de ${formTitle}`,
       descripcion: adjuntos.length > 0
         ? `Incluye ${adjuntos.length} archivo(s) adjunto(s) - Procesando...`
         : "Puedes revisar los detalles en el panel de respuestas.",
@@ -167,7 +167,7 @@ router.post("/", async (req, res) => {
 
     await addNotification(req.db, {
       filtro: { cargo: "admin" },
-      titulo: `${usuario} de la empresa ${empresa} ha respondido el formulario ${formTitle}`,
+      titulo: `${usuario} de la empresa ${empresa} generó una solicitud de ${formTitle}`,
       descripcion: adjuntos.length > 0
         ? `Incluye ${adjuntos.length} archivo(s) adjunto(s) - Procesando...`
         : "Puedes revisar los detalles en el panel de respuestas.",
