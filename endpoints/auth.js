@@ -63,7 +63,7 @@ const generateAndSend2FACode = async (db, user, type) => {
 
   const userEmail = decrypt(user.mail);
   const userName = decrypt(user.nombre);
-  
+
   const minutes = EXPIRATION_TIME / 1000 / 60;
   const htmlContent = `
     <p>Hola ${userName},</p>
@@ -334,10 +334,10 @@ router.post("/verify-login-2fa", async (req, res) => {
   const now = new Date();
 
   try {
-    const user = await req.db.collection("usuarios").findOne({ 
-      _id: new ObjectId(userId) 
+    const user = await req.db.collection("usuarios").findOne({
+      _id: new ObjectId(userId)
     });
-    
+
     if (!user) return res.status(401).json({ success: false, message: "Usuario no encontrado." });
 
     const codeRecord = await req.db.collection("2fa_codes").findOne({
@@ -359,9 +359,9 @@ router.post("/verify-login-2fa", async (req, res) => {
 
     const finalToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
-    
+
     const userEmail = decrypt(user.mail);
-    
+
     await req.db.collection("tokens").insertOne({
       token: finalToken,
       email: userEmail,
@@ -375,13 +375,13 @@ router.post("/verify-login-2fa", async (req, res) => {
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgentString = req.headers['user-agent'] || 'Desconocido';
     const agent = useragent.parse(userAgentString);
-    
+
     const userName = decrypt(user.nombre);
-    const usr = { 
-      name: userName, 
-      email: userEmail, 
+    const usr = {
+      name: userName,
+      email: userEmail,
       cargo: user.rol,
-      userId: userId 
+      userId: userId
     };
 
     await req.db.collection("ingresos").insertOne({
@@ -392,10 +392,10 @@ router.post("/verify-login-2fa", async (req, res) => {
       now: now,
     });
 
-    return res.json({ 
-      success: true, 
-      token: finalToken, 
-      usr 
+    return res.json({
+      success: true,
+      token: finalToken,
+      usr
     });
   } catch (err) {
     console.error("Error en verify-login-2fa:", err);
@@ -406,10 +406,10 @@ router.post("/verify-login-2fa", async (req, res) => {
 router.post("/recuperacion", async (req, res) => {
   const { email } = req.body;
   try {
-    const user = await req.db.collection("usuarios").findOne({ 
-      mail_index: createBlindIndex(email.toLowerCase().trim()) 
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(email.toLowerCase().trim())
     });
-    
+
     if (!user || user.estado === "inactivo") {
       return res.status(404).json({ message: "No disponible." });
     }
@@ -420,17 +420,17 @@ router.post("/recuperacion", async (req, res) => {
     const userEmail = decrypt(user.mail);
 
     await req.db.collection("recovery_codes").updateMany(
-      { email: userEmail, active: true }, 
+      { email: userEmail, active: true },
       { $set: { active: false } }
     );
-    
-    await req.db.collection("recovery_codes").insertOne({ 
-      email: userEmail, 
-      code, 
-      userId: user._id.toString(), 
-      createdAt: new Date(), 
-      expiresAt, 
-      active: true 
+
+    await req.db.collection("recovery_codes").insertOne({
+      email: userEmail,
+      code,
+      userId: user._id.toString(),
+      createdAt: new Date(),
+      expiresAt,
+      active: true
     });
 
     await sendEmail({
@@ -440,9 +440,9 @@ router.post("/recuperacion", async (req, res) => {
     });
 
     res.json({ success: true, message: "Enviado." });
-  } catch (err) { 
+  } catch (err) {
     console.error("Error en recuperación:", err);
-    res.status(500).json({ error: "Error interno" }); 
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
@@ -493,12 +493,15 @@ router.post("/borrarpass", async (req, res) => {
 });
 
 
+// SEND 2FA CODE - ACTIVACIÓN (ya corregido)
 router.post("/send-2fa-code", async (req, res) => {
   try {
     const { email } = req.body;
-    
+
     if (!email) {
-      return res.status(400).json({ message: "Email requerido." });
+      return res.status(400).json({
+        message: "Email requerido."
+      });
     }
 
     const user = await req.db.collection("usuarios").findOne({
@@ -506,30 +509,55 @@ router.post("/send-2fa-code", async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({ message: "Usuario no encontrado." });
+      return res.status(404).json({
+        message: "Usuario no encontrado."
+      });
     }
 
     await generateAndSend2FACode(req.db, user, '2FA_SETUP');
 
-    res.status(200).json({ 
-      success: true, 
-      userId: user._id.toString(),
-      message: "Código de activación 2FA enviado a tu correo." 
+    res.status(200).json({
+      success: true,
+      message: "Código de activación 2FA enviado a tu correo."
     });
   } catch (err) {
     console.error("Error en /send-2fa-code:", err);
-    res.status(500).json({ success: false, message: "Error interno al procesar la solicitud." });
+    res.status(500).json({
+      success: false,
+      message: "Error interno al procesar la solicitud."
+    });
   }
 });
 
+// VERIFICAR ACTIVACIÓN 2FA - VERSIÓN CORREGIDA
 router.post("/verify-2fa-activation", async (req, res) => {
-  const { userId, verificationCode } = req.body;
+  const { email, verificationCode } = req.body;
 
-  if (!userId || !verificationCode || verificationCode.length !== 6) {
-    return res.status(400).json({ success: false, message: "Datos incompletos o código inválido." });
+  console.log("DEBUG verify-2fa-activation - Body recibido:", req.body);
+
+  if (!email || !verificationCode || verificationCode.length !== 6) {
+    return res.status(400).json({
+      success: false,
+      message: "Datos incompletos o código inválido."
+    });
   }
 
   try {
+    // Buscar usuario por email (usando blind index)
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(email.toLowerCase().trim())
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuario no encontrado."
+      });
+    }
+
+    const userId = user._id.toString();
+
+    // Buscar código 2FA activo
     const codeRecord = await req.db.collection("2fa_codes").findOne({
       userId: userId,
       code: verificationCode,
@@ -539,66 +567,94 @@ router.post("/verify-2fa-activation", async (req, res) => {
     });
 
     if (!codeRecord) {
-      return res.status(400).json({ success: false, message: "Código incorrecto o expirado." });
+      return res.status(400).json({
+        success: false,
+        message: "Código incorrecto o expirado."
+      });
     }
 
+    // Marcar código como usado
     await req.db.collection("2fa_codes").updateOne(
       { _id: codeRecord._id },
       { $set: { active: false, usedAt: new Date() } }
     );
 
+    // Actualizar estado 2FA del usuario
     await req.db.collection("usuarios").updateOne(
       { _id: new ObjectId(userId) },
       { $set: { twoFactorEnabled: true } }
     );
 
-    res.status(200).json({ 
-      success: true, 
-      message: "Autenticación de Dos Factores activada exitosamente." 
+    res.status(200).json({
+      success: true,
+      message: "Autenticación de Dos Factores activada exitosamente."
     });
   } catch (err) {
     console.error("Error en /verify-2fa-activation:", err);
-    res.status(500).json({ success: false, message: "Error interno en la verificación." });
+    res.status(500).json({
+      success: false,
+      message: "Error interno en la verificación."
+    });
   }
 });
 
+// DESACTIVAR 2FA - VERSIÓN CORREGIDA
 router.post("/disable-2fa", async (req, res) => {
-  const { userId } = req.body;
-  
-  if (!userId) {
-    return res.status(400).json({ success: false, message: "User ID es requerido." });
+  const { email } = req.body;
+
+  console.log("DEBUG disable-2fa - Body recibido:", req.body);
+
+  if (!email) {
+    return res.status(400).json({
+      success: false,
+      message: "Email es requerido."
+    });
   }
 
   try {
+    // Buscar usuario por email (usando blind index)
     const user = await req.db.collection("usuarios").findOne({
-      _id: new ObjectId(userId)
+      mail_index: createBlindIndex(email.toLowerCase().trim())
     });
 
     if (!user) {
-      return res.status(404).json({ success: false, message: "Usuario no encontrado." });
+      return res.status(404).json({
+        success: false,
+        message: "Usuario no encontrado."
+      });
     }
 
     if (!user.twoFactorEnabled) {
-      return res.status(400).json({ success: false, message: "El 2FA no está activado para este usuario." });
+      return res.status(400).json({
+        success: false,
+        message: "El 2FA no está activado para este usuario."
+      });
     }
 
+    const userId = user._id.toString();
+
+    // Actualizar estado
     await req.db.collection("usuarios").updateOne(
       { _id: new ObjectId(userId) },
       { $set: { twoFactorEnabled: false } }
     );
 
+    // Invalidar códigos 2FA activos
     await req.db.collection("2fa_codes").updateMany(
       { userId: userId, active: true },
       { $set: { active: false, revokedAt: new Date(), reason: "2fa_disabled" } }
     );
 
-    res.status(200).json({ 
-      success: true, 
-      message: "Autenticación de Dos Factores desactivada exitosamente." 
+    res.status(200).json({
+      success: true,
+      message: "Autenticación de Dos Factores desactivada exitosamente."
     });
   } catch (err) {
     console.error("Error en /disable-2fa:", err);
-    res.status(500).json({ success: false, message: "Error interno al desactivar 2FA." });
+    res.status(500).json({
+      success: false,
+      message: "Error interno al desactivar 2FA."
+    });
   }
 });
 
@@ -691,7 +747,7 @@ router.post("/register", async (req, res) => {
       mail_index: createBlindIndex(m),
       empresa: encrypt(empresa),
       cargo: encrypt(cargo),
-      rol, 
+      rol,
       pass: "",
       estado: estado || "pendiente",
       twoFactorEnabled: false,
@@ -705,15 +761,15 @@ router.post("/register", async (req, res) => {
       userId: result.insertedId.toString(),
       titulo: `Registro Exitoso!`,
       descripcion: `Bienvenid@ a nuestra plataforma Virtual Acciona!`,
-      prioridad: 2, 
-      color: "#7afb24ff", 
+      prioridad: 2,
+      color: "#7afb24ff",
       icono: "User",
     });
 
-    res.status(201).json({ 
-      success: true, 
-      message: "Usuario registrado", 
-      userId: result.insertedId 
+    res.status(201).json({
+      success: true,
+      message: "Usuario registrado",
+      userId: result.insertedId
     });
   } catch (err) {
     console.error("Error al registrar:", err);
@@ -729,8 +785,8 @@ router.post("/change-password", async (req, res) => {
   }
 
   try {
-    const user = await req.db.collection("usuarios").findOne({ 
-      mail_index: createBlindIndex(email.toLowerCase().trim()) 
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(email.toLowerCase().trim())
     });
 
     if (!user) {
@@ -801,7 +857,7 @@ router.put("/users/:id", async (req, res) => {
       mail_index: mailIndex,
       _id: { $ne: new ObjectId(userId) }
     });
-    
+
     if (existingUser) {
       return res.status(400).json({ error: "El email ya está en uso por otro usuario" });
     }
@@ -911,7 +967,7 @@ router.post("/set-password", async (req, res) => {
 
     const hashPassword = require("../utils/seguridad.helper").hashPassword;
     const hashed = await hashPassword(password);
-    
+
     const result = await req.db.collection("usuarios").updateOne(
       { _id: new ObjectId(userId) },
       { $set: { pass: hashed, estado: "activo", updatedAt: new Date().toISOString() } }
