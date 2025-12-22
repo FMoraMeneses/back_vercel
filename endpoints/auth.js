@@ -399,21 +399,40 @@ router.post("/verify-login-2fa", async (req, res) => {
       { $set: { active: false, usedAt: now } }
     );
 
-    // Generar token de sesión
-    const finalToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
-
+    // ✅ RESTAURAR LÓGICA DE REUTILIZACIÓN DE TOKENS
+    let finalToken = null;
+    let expiresAt = null;
     const userEmail = decrypt(user.mail);
 
-    await req.db.collection("tokens").insertOne({
-      token: finalToken,
+    const existingTokenRecord = await req.db.collection("tokens").findOne({
       email: userEmail,
-      userId: userId,
-      rol: user.rol,
-      createdAt: now,
-      expiresAt,
       active: true
     });
+
+    if (existingTokenRecord && new Date(existingTokenRecord.expiresAt) > now) {
+      finalToken = existingTokenRecord.token;
+      expiresAt = existingTokenRecord.expiresAt;
+    } else {
+      if (existingTokenRecord) {
+        await req.db.collection("tokens").updateOne(
+          { _id: existingTokenRecord._id },
+          { $set: { active: false, revokedAt: now } }
+        );
+      }
+
+      finalToken = crypto.randomBytes(32).toString("hex");
+      expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
+
+      await req.db.collection("tokens").insertOne({
+        token: finalToken,
+        email: userEmail,
+        userId: userId,
+        rol: user.rol,
+        createdAt: now,
+        expiresAt,
+        active: true
+      });
+    }
 
     // Registrar ingreso
     const ipAddress = req.ip || req.connection.remoteAddress;
