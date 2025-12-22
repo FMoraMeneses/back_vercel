@@ -6,7 +6,7 @@ const multer = require('multer');
 const { addNotification } = require("../utils/notificaciones.helper");
 const { sendEmail } = require("../utils/mail.helper"); // Importación del helper de correo
 const useragent = require('useragent');
-const { createBlindIndex, verifyPassword, decrypt, encrypt, hashPassword } = require("../utils/seguridad.helper");
+const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
 
 const TOKEN_EXPIRATION = 12 * 1000 * 60 * 60;
@@ -125,9 +125,9 @@ router.get("/solicitud", async (req, res) => {
       .toArray();
 
     const usuariosFormateados = usuarios.map(usr => ({
-      nombre: decrypt(usr.nombre),
-      apellido: decrypt(usr.apellido),
-      correo: decrypt(usr.mail),
+      nombre: usr.nombre,
+      apellido: usr.apellido,
+      correo: usr.mail,
       empresa: usr.empresa
     }));
 
@@ -138,31 +138,6 @@ router.get("/solicitud", async (req, res) => {
   }
 });
 
-// --- ENDPOINT DE MIGRACIÓN MASIVA ---
-router.get("/mantenimiento/migrar-pqc", async (req, res) => {
-  try {
-    const usuarios = await req.db.collection("usuarios").find().toArray();
-    let cont = 0;
-    for (let u of usuarios) {
-      const up = {};
-      if (u.pass && !u.pass.startsWith('$argon2')) up.pass = await hashPassword(u.pass);
-      if (u.nombre && !u.nombre.includes(':')) up.nombre = encrypt(u.nombre);
-      if (u.apellido && !u.apellido.includes(':')) up.apellido = encrypt(u.apellido);
-      if (u.mail && !u.mail.includes(':')) {
-        const cleanMail = u.mail.toLowerCase().trim();
-        up.mail = encrypt(cleanMail);
-        up.mail_index = createBlindIndex(cleanMail);
-      }
-      if (Object.keys(up).length > 0) {
-        await req.db.collection("usuarios").updateOne({ _id: u._id }, { $set: up });
-        cont++;
-      }
-    }
-    res.json({ success: true, message: `Migración finalizada. ${cont} registros procesados.` });
-    } catch (err) {
-  res.status(500).json({ error: err.message });
-}
-});
 
 router.get("/:mail", async (req, res) => {
   try {
@@ -211,7 +186,8 @@ router.get("/full/:mail", async (req, res) => {
           empresa: 1,
           cargo: 1,
           rol: 1,
-          notificaciones: 1
+          notificaciones: 1,
+          twoFactorEnabled: 1
         }
       });
 
@@ -605,6 +581,54 @@ router.post("/verify-2fa-activation", async (req, res) => {
   }
 });
 
+router.post("/disable-2fa", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ success: false, message: "No autorizado. Token requerido." });
+  }
+
+  const userEmail = req.body.email;
+  if (!userEmail) {
+    return res.status(400).json({ success: false, message: "Email es requerido." });
+  }
+
+  try {
+    const normalizedEmail = userEmail.toLowerCase().trim();
+
+    // 1. Buscar el usuario
+    const user = await req.db.collection("usuarios").findOne({
+      mail: normalizedEmail
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "Usuario no encontrado." });
+    }
+
+    // 2. Verificar que el usuario tiene 2FA activado
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({ success: false, message: "El 2FA no está activado para este usuario." });
+    }
+
+    // 3. Actualizar el estado 2FA del usuario a false
+    await req.db.collection("usuarios").updateOne(
+      { mail: normalizedEmail },
+      { $set: { twoFactorEnabled: false } }
+    );
+
+    // 4. Invalidar todos los códigos 2FA activos del usuario
+    await req.db.collection("2fa_codes").updateMany(
+      { userId: normalizedEmail, active: true },
+      { $set: { active: false, revokedAt: new Date(), reason: "2fa_disabled" } }
+    );
+
+    // 5. Respuesta exitosa
+    res.status(200).json({ success: true, message: "Autenticación de Dos Factores desactivada exitosamente." });
+
+  } catch (err) {
+    console.error("Error en /disable-2fa:", err);
+    res.status(500).json({ success: false, message: "Error interno al desactivar 2FA." });
+  }
+});
 
 router.get("/logins/todos", async (req, res) => {
   try {
