@@ -48,7 +48,7 @@ const generateAndSend2FACode = async (db, user, type) => {
 
   const verificationCode = crypto.randomInt(100000, 999999).toString();
   const expiresAt = new Date(Date.now() + EXPIRATION_TIME);
-  const userId = decrypt(user.mail); // **CORRECCIÓN: Usar el _id de MongoDB**
+  const userId = user.mail; // **CORRECCIÓN: Usar el _id de MongoDB**
 
   // 2. Invalidar códigos anteriores del MISMO TIPO
   await db.collection("2fa_codes").updateMany(
@@ -332,7 +332,7 @@ router.post("/verify-login-2fa", async (req, res) => {
   }
 
   const now = new Date();
-  const normalizedEmail = email.toLowerCase().trim();
+  const normalizedEmail = decrypt(email).toLowerCase().trim();
 
   try {
     const user = await req.db.collection("usuarios").findOne({ mail: normalizedEmail });
