@@ -251,7 +251,11 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const now = new Date();
+    const now = fecha.toLocaleString("es-cl", {
+      timeZone: "America/Santiago",
+      timeZoneName: "short"
+    });
+
     let finalToken = null;
     let expiresAt = null;
 
