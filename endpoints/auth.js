@@ -246,6 +246,7 @@ router.post("/login", async (req, res) => {
         success: true,
         twoFA: true,
         userId: user._id.toString(),
+        email: normalizedEmail, // IMPORTANTE: Devuelve también el email
         message: "Se requiere código 2FA. Enviado a tu correo."
       });
     }
@@ -325,21 +326,41 @@ router.post("/login", async (req, res) => {
 });
 
 router.post("/verify-login-2fa", async (req, res) => {
-  const { userId, verificationCode } = req.body;
+  const { email, verificationCode } = req.body;
 
-  if (!userId || !verificationCode || verificationCode.length !== 6) {
-    return res.status(400).json({ success: false, message: "Datos incompletos o código inválido." });
+  console.log("DEBUG verify-login-2fa - Datos recibidos:", {
+    email: email,
+    verificationCode: verificationCode,
+    codeLength: verificationCode?.length
+  });
+
+  if (!email || !verificationCode || verificationCode.length !== 6) {
+    return res.status(400).json({
+      success: false,
+      message: "Datos incompletos o código inválido."
+    });
   }
 
   const now = new Date();
 
   try {
+    // Buscar usuario por email (usando blind index)
     const user = await req.db.collection("usuarios").findOne({
-      _id: new ObjectId(userId)
+      mail_index: createBlindIndex(email.toLowerCase().trim())
     });
 
-    if (!user) return res.status(401).json({ success: false, message: "Usuario no encontrado." });
+    if (!user) {
+      console.log("DEBUG: Usuario no encontrado para email:", email);
+      return res.status(401).json({
+        success: false,
+        message: "Usuario no encontrado."
+      });
+    }
 
+    const userId = user._id.toString();
+    console.log("DEBUG: Usuario encontrado, ID:", userId);
+
+    // Buscar código 2FA activo para LOGIN
     const codeRecord = await req.db.collection("2fa_codes").findOne({
       userId: userId,
       code: verificationCode,
@@ -348,15 +369,37 @@ router.post("/verify-login-2fa", async (req, res) => {
       expiresAt: { $gt: now }
     });
 
+    console.log("DEBUG: Código encontrado:", codeRecord);
+
     if (!codeRecord) {
-      return res.status(401).json({ success: false, message: "Código 2FA incorrecto o expirado." });
+      // Verificar si hay códigos pero expirados
+      const expiredCode = await req.db.collection("2fa_codes").findOne({
+        userId: userId,
+        code: verificationCode,
+        type: '2FA_LOGIN'
+      });
+
+      if (expiredCode) {
+        console.log("DEBUG: Código encontrado pero expirado o inactivo");
+        return res.status(401).json({
+          success: false,
+          message: "Código 2FA expirado. Solicita uno nuevo."
+        });
+      }
+
+      return res.status(401).json({
+        success: false,
+        message: "Código 2FA incorrecto."
+      });
     }
 
+    // Marcar código como usado
     await req.db.collection("2fa_codes").updateOne(
       { _id: codeRecord._id },
       { $set: { active: false, usedAt: now } }
     );
 
+    // Generar token de sesión
     const finalToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
 
@@ -372,6 +415,7 @@ router.post("/verify-login-2fa", async (req, res) => {
       active: true
     });
 
+    // Registrar ingreso
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgentString = req.headers['user-agent'] || 'Desconocido';
     const agent = useragent.parse(userAgentString);
@@ -392,6 +436,8 @@ router.post("/verify-login-2fa", async (req, res) => {
       now: now,
     });
 
+    console.log("DEBUG: Login 2FA exitoso para usuario:", userEmail);
+
     return res.json({
       success: true,
       token: finalToken,
@@ -399,7 +445,10 @@ router.post("/verify-login-2fa", async (req, res) => {
     });
   } catch (err) {
     console.error("Error en verify-login-2fa:", err);
-    return res.status(500).json({ success: false, message: "Error interno en la verificación 2FA." });
+    return res.status(500).json({
+      success: false,
+      message: "Error interno en la verificación 2FA."
+    });
   }
 });
 
