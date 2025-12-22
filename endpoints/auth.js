@@ -125,9 +125,9 @@ router.get("/solicitud", async (req, res) => {
       .toArray();
 
     const usuariosFormateados = usuarios.map(usr => ({
-      nombre: usr.nombre,
-      apellido: usr.apellido,
-      correo: usr.mail,
+      nombre: decrypt(usr.nombre),
+      apellido: decrypt(usr.apellido),
+      correo: decrypt(usr.mail),
       empresa: usr.empresa
     }));
 
