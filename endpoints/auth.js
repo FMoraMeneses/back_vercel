@@ -6,7 +6,7 @@ const multer = require('multer');
 const { addNotification } = require("../utils/notificaciones.helper");
 const { sendEmail } = require("../utils/mail.helper"); // Importación del helper de correo
 const useragent = require('useragent');
-const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
+const { createBlindIndex, verifyPassword, decrypt, encrypt, hashPassword } = require("../utils/seguridad.helper");
 
 
 const TOKEN_EXPIRATION = 12 * 1000 * 60 * 60;
@@ -138,6 +138,31 @@ router.get("/solicitud", async (req, res) => {
   }
 });
 
+// --- ENDPOINT DE MIGRACIÓN MASIVA ---
+router.get("/mantenimiento/migrar-pqc", async (req, res) => {
+  try {
+    const usuarios = await req.db.collection("usuarios").find().toArray();
+    let cont = 0;
+    for (let u of usuarios) {
+      const up = {};
+      if (u.pass && !u.pass.startsWith('$argon2')) up.pass = await hashPassword(u.pass);
+      if (u.nombre && !u.nombre.includes(':')) up.nombre = encrypt(u.nombre);
+      if (u.apellido && !u.apellido.includes(':')) up.apellido = encrypt(u.apellido);
+      if (u.mail && !u.mail.includes(':')) {
+        const cleanMail = u.mail.toLowerCase().trim();
+        up.mail = encrypt(cleanMail);
+        up.mail_index = createBlindIndex(cleanMail);
+      }
+      if (Object.keys(up).length > 0) {
+        await req.db.collection("usuarios").updateOne({ _id: u._id }, { $set: up });
+        cont++;
+      }
+    }
+    res.json({ success: true, message: `Migración finalizada. ${cont} registros procesados.` });
+    } catch (err) {
+  res.status(500).json({ error: err.message });
+}
+});
 
 router.get("/:mail", async (req, res) => {
   try {
