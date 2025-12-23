@@ -817,6 +817,7 @@ router.post("/:id/upload-correction", upload.single('correctedFile'), async (req
   }
 });
 
+// Cambiar estado a finalizado
 router.get("/:id/finalized", async (req, res) => {
   try {
     const { id } = req.params;
@@ -864,6 +865,7 @@ router.get("/:id/finalized", async (req, res) => {
   }
 });
 
+// Cambiar estado a archivado
 router.get("/:id/archived", async (req, res) => {
   try {
     const { id } = req.params;
@@ -881,6 +883,7 @@ router.get("/:id/archived", async (req, res) => {
       return res.status(404).json({ error: "Respuesta no encontrada" });
     }
 
+    // 1. Actualizar el estado a archivado
     const updateResult = await req.db.collection("respuestas").updateOne(
       { _id: new ObjectId(id) },
       {
@@ -896,17 +899,38 @@ router.get("/:id/archived", async (req, res) => {
       return res.status(404).json({ error: "No se pudo actualizar la respuesta" });
     }
 
-    console.log(`Respuesta ${id} actualizada a estado: archivado`);
+    const cleanupResults = await Promise.all([
+      // Eliminar de aprobados (usa responseId como string u objeto según tu flujo)
+      req.db.collection("aprobados").deleteMany({ responseId: id }),
+      
+      // Eliminar de adjuntos (suele usar ObjectId por la estructura anterior)
+      req.db.collection("adjuntos").deleteMany({ responseId: new ObjectId(id) }),
+      
+      // Eliminar de docxs (usa responseId habitualmente como string)
+      req.db.collection("docxs").deleteMany({ responseId: id })
+    ]);
 
+    console.log(`Respuesta ${id} archivada. Limpieza completada:`, {
+      aprobados: cleanupResults[0].deletedCount,
+      adjuntos: cleanupResults[1].deletedCount,
+      docxs: cleanupResults[2].deletedCount
+    });
+
+    // Respuesta final al cliente
     res.json({
       success: true,
-      message: "Respuesta archivada correctamente",
+      message: "Respuesta archivada y archivos relacionados eliminados correctamente",
       status: "archivado",
-      responseId: id
+      responseId: id,
+      cleanup: {
+        aprobados: cleanupResults[0].deletedCount,
+        adjuntos: cleanupResults[1].deletedCount,
+        docxs: cleanupResults[2].deletedCount
+      }
     });
 
   } catch (err) {
-    console.error("Error archivando respuesta:", err);
+    console.error("Error archivando respuesta y limpiando colecciones:", err);
     res.status(500).json({ error: "Error archivando respuesta: " + err.message });
   }
 });
