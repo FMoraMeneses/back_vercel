@@ -941,8 +941,8 @@ router.put("/users/:id", async (req, res) => {
       apellido: encrypt(apellido),
       mail: encrypt(userEmail),
       mail_index: mailIndex,
-      empresa: encrypt(empresa),
-      cargo: encrypt(cargo),
+      empresa: empresa,
+      cargo: cargo,
       rol,
       estado,
       updatedAt: new Date().toISOString()
