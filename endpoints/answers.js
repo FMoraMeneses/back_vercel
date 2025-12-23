@@ -733,6 +733,7 @@ router.post("/chat", async (req, res) => {
         let userEmail = null;
         let formName = "el formulario";
         let userName = autor;
+        let respuestaId = respuesta._id.toString();
 
         // OBTENER EMAIL DEL USUARIO (CLIENTE) DESDE LA RESPUESTA
         if (respuesta.user && respuesta.user.mail) {
@@ -755,7 +756,7 @@ router.post("/chat", async (req, res) => {
         // ENVIAR CORREO SI TENEMOS EMAIL
         if (userEmail) {
           const portalUrl = process.env.PORTAL_URL || "https://tuportal.com";
-          const chatUrl = `${portalUrl}/respuestas/${respuesta._id}?tab=messages`;
+          const chatUrl = `${portalUrl}/respuestas/${respuestaId}?tab=messages`;
 
           const emailHtml = `
             <!DOCTYPE html>
@@ -768,8 +769,11 @@ router.post("/chat", async (req, res) => {
                     .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
                     .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
                     .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+                    .button:hover { background-color: #4338ca; }
                     .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
                     .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+                    .title { color: #1f2937; font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+                    .hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
                 </style>
             </head>
             <body>
@@ -778,34 +782,43 @@ router.post("/chat", async (req, res) => {
                         <h1>Acciona Centro de Negocios</h1>
                     </div>
                     <div class="content">
-                        <h2>Nuevo mensaje recibido</h2>
-                        <p>Has recibido un nuevo mensaje en la siguiente solicitud/formulario:</p>
+                        <h2 class="title">Tienes un nuevo mensaje en la plataforma de Recursos Humanos</h2>
+                        
+                        <p>Estimado/a <strong>${userName}</strong>,</p>
                         
                         <div class="message-box">
                             <p><strong>Formulario:</strong> ${formName}</p>
                             <p><strong>De:</strong> ${autor}</p>
                             <p><strong>Mensaje:</strong> "${mensaje}"</p>
-                            <p><strong>Fecha:</strong> ${new Date().toLocaleDateString('es-CL', {
+                            <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
             day: '2-digit',
             month: '2-digit',
             year: 'numeric',
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
+            second: '2-digit'
           })}</p>
                         </div>
                         
-                        <p>Puedes responder a este mensaje ingresando al chat del formulario:</p>
+                        <p>Para ver el mensaje completo y responder, haz clic en el siguiente botón:</p>
                         
-                        <a href="${chatUrl}" class="button">
-                            Ver chat completo
-                        </a>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${chatUrl}" class="button">
+                                💬 Ir al chat de mensajes
+                            </a>
+                        </div>
                         
-                        <p><small>O copia este enlace en tu navegador:<br>
-                        ${chatUrl}</small></p>
+                        <div class="hr"></div>
+                        
+                        <p style="font-size: 14px; color: #6b7280;">
+                            Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+                            <a href="${chatUrl}" style="color: #4f46e5; word-break: break-all;">${chatUrl}</a>
+                        </p>
                         
                         <div class="footer">
-                            <p>Este es un mensaje automático. Por favor, no responder a este correo.</p>
-                            <p>Acciona Centro de Negocios Spa.</p>
+                            <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
+                            <p>Por favor, no responder a este correo.</p>
+                            <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
                         </div>
                     </div>
                 </div>
@@ -818,7 +831,7 @@ router.post("/chat", async (req, res) => {
 
           await sendEmail({
             to: userEmail,
-            subject: `Nuevo mensaje - ${formName} - Acciona`,
+            subject: `💬 Nuevo mensaje - Plataforma RRHH - ${formName}`,
             html: emailHtml
           });
 

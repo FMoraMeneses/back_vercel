@@ -6,7 +6,7 @@ const multer = require('multer');
 const { addNotification } = require("../utils/notificaciones.helper");
 const { sendEmail } = require("../utils/mail.helper");
 const useragent = require('useragent');
-const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
+const { encrypt, createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
 
 const getAhoraChile = () => {
   const d = new Date();
