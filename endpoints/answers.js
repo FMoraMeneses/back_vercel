@@ -715,7 +715,7 @@ router.get("/:formId/chat/", async (req, res) => {
 //enviar mensaje
 router.post("/chat", async (req, res) => {
   try {
-    const { formId, autor, mensaje, admin } = req.body;
+    const { formId, autor, mensaje, admin, sendToEmail } = req.body;
     if (!autor || !mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
 
     const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
@@ -726,6 +726,111 @@ router.post("/chat", async (req, res) => {
 
     await req.db.collection("respuestas").updateOne({ _id: respuesta._id }, { $push: { mensajes: nuevoMensaje } });
 
+    // ENVIAR CORREO SI ESTÁ MARCADO EL CHECKBOX Y NO ES MENSAJE DE ADMIN
+    if (sendToEmail === true && admin !== true) {
+      try {
+        // OBTENER DATOS PARA EL CORREO
+        let userEmail = null;
+        let formName = "el formulario";
+        let userName = autor;
+
+        // OBTENER EMAIL DEL USUARIO (CLIENTE) DESDE LA RESPUESTA
+        if (respuesta.user && respuesta.user.mail) {
+          userEmail = respuesta.user.mail;
+          userName = respuesta.user.nombre || autor;
+        }
+
+        // OBTENER NOMBRE DEL FORMULARIO
+        if (respuesta.formId) {
+          const form = await req.db.collection("forms").findOne({
+            _id: new ObjectId(respuesta.formId)
+          });
+          if (form && form.title) {
+            formName = form.title;
+          }
+        } else if (respuesta._contexto && respuesta._contexto.formTitle) {
+          formName = respuesta._contexto.formTitle;
+        }
+
+        // ENVIAR CORREO SI TENEMOS EMAIL
+        if (userEmail) {
+          const portalUrl = process.env.PORTAL_URL || "https://tuportal.com";
+          const chatUrl = `${portalUrl}/respuestas/${respuesta._id}?tab=messages`;
+
+          const emailHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                    .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
+                    .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+                    .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
+                    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>Acciona Centro de Negocios</h1>
+                    </div>
+                    <div class="content">
+                        <h2>Nuevo mensaje recibido</h2>
+                        <p>Has recibido un nuevo mensaje en la siguiente solicitud/formulario:</p>
+                        
+                        <div class="message-box">
+                            <p><strong>Formulario:</strong> ${formName}</p>
+                            <p><strong>De:</strong> ${autor}</p>
+                            <p><strong>Mensaje:</strong> "${mensaje}"</p>
+                            <p><strong>Fecha:</strong> ${new Date().toLocaleDateString('es-CL', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })}</p>
+                        </div>
+                        
+                        <p>Puedes responder a este mensaje ingresando al chat del formulario:</p>
+                        
+                        <a href="${chatUrl}" class="button">
+                            Ver chat completo
+                        </a>
+                        
+                        <p><small>O copia este enlace en tu navegador:<br>
+                        ${chatUrl}</small></p>
+                        
+                        <div class="footer">
+                            <p>Este es un mensaje automático. Por favor, no responder a este correo.</p>
+                            <p>Acciona Centro de Negocios Spa.</p>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+          `;
+
+          // USAR LA MISMA FUNCIÓN DE ENVÍO DE CORREOS QUE EN upload-corrected-files
+          const { sendEmail } = require("../utils/mail.helper");
+
+          await sendEmail({
+            to: userEmail,
+            subject: `Nuevo mensaje - ${formName} - Acciona`,
+            html: emailHtml
+          });
+
+          console.log(`Correo enviado exitosamente a: ${userEmail}`);
+        }
+      } catch (emailError) {
+        console.error("Error enviando correo:", emailError);
+        // Continuamos aunque falle el correo, no afecta la respuesta del mensaje
+      }
+    }
+
+    // NOTIFICACIONES (lógica original mantenida)
     if (respuesta?.user?.nombre === autor) {
       const notifChat = {
         filtro: { cargo: "RRHH" },
@@ -745,8 +850,14 @@ router.post("/chat", async (req, res) => {
         actionUrl: `/?id=${respuesta._id}`,
       });
     }
-    res.json({ message: "Mensaje enviado", data: nuevoMensaje });
+
+    res.json({
+      message: "Mensaje enviado",
+      data: nuevoMensaje,
+      emailSent: sendToEmail === true && admin !== true
+    });
   } catch (err) {
+    console.error("Error en chat:", err);
     res.status(500).json({ error: "Error en chat" });
   }
 });
@@ -889,14 +1000,14 @@ router.get("/mantenimiento/limpiar-archivos-archivados", async (req, res) => {
     // 3. Ejecutar la eliminación masiva en las colecciones de archivos
     // Usamos $in para borrar todos los documentos cuyos responseId coincidan con la lista
     const [delAprobados, delAdjuntos, delDocxs] = await Promise.all([
-      req.db.collection("aprobados").deleteMany({ 
-        responseId: { $in: idsString } 
+      req.db.collection("aprobados").deleteMany({
+        responseId: { $in: idsString }
       }),
-      req.db.collection("adjuntos").deleteMany({ 
-        responseId: { $in: idsObjectId } 
+      req.db.collection("adjuntos").deleteMany({
+        responseId: { $in: idsObjectId }
       }),
-      req.db.collection("docxs").deleteMany({ 
-        responseId: { $in: idsString } 
+      req.db.collection("docxs").deleteMany({
+        responseId: { $in: idsString }
       })
     ]);
 
@@ -919,8 +1030,8 @@ router.get("/mantenimiento/limpiar-archivos-archivados", async (req, res) => {
 
   } catch (err) {
     console.error("Error en la limpieza masiva de archivos:", err);
-    res.status(500).json({ 
-      error: "Error durante el proceso de limpieza: " + err.message 
+    res.status(500).json({
+      error: "Error durante el proceso de limpieza: " + err.message
     });
   }
 });
@@ -962,10 +1073,10 @@ router.get("/:id/archived", async (req, res) => {
     const cleanupResults = await Promise.all([
       // Eliminar de aprobados (usa responseId como string u objeto según tu flujo)
       req.db.collection("aprobados").deleteMany({ responseId: id }),
-      
+
       // Eliminar de adjuntos (suele usar ObjectId por la estructura anterior)
       req.db.collection("adjuntos").deleteMany({ responseId: new ObjectId(id) }),
-      
+
       // Eliminar de docxs (usa responseId habitualmente como string)
       req.db.collection("docxs").deleteMany({ responseId: id })
     ]);
