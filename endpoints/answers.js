@@ -915,6 +915,7 @@ router.get("/:id/archived", async (req, res) => {
 
 // 1. SUBIR MÚLTIPLES ARCHIVOS CORREGIDOS
 // Cambia el endpoint para recibir archivos uno por uno
+
 router.post("/upload-corrected-files", async (req, res) => {
   try {
     console.log("=== DEBUG BACKEND - HEADERS ===");
@@ -926,10 +927,17 @@ router.post("/upload-corrected-files", async (req, res) => {
         return res.status(400).json({ error: err.message });
       }
 
+      // VERIFICAR SI SE RECIBIERON FILES
+      console.log("Files recibidos:", req.files ? req.files.length : 'NONE');
+      console.log("Body fields:", Object.keys(req.body));
+      console.log("responseId:", req.body.responseId);
+      console.log("index:", req.body.index, "type:", typeof req.body.index);
+      console.log("total:", req.body.total, "type:", typeof req.body.total);
+
       const { responseId, index, total } = req.body;
       const files = req.files;
 
-      // VALIDACIONES
+      // VALIDACIONES MEJORADAS
       if (!responseId) {
         return res.status(400).json({ error: 'responseId es requerido' });
       }
@@ -941,35 +949,38 @@ router.post("/upload-corrected-files", async (req, res) => {
         });
       }
 
-      // OBTENER DATOS DEL USUARIO Y FORMULARIO ANTES DE PROCESAR
+      // OBTENER DATOS DEL USUARIO Y FORMULARIO
       let userEmail = null;
       let formName = "el formulario";
       let userName = "Usuario";
       let userId = null;
 
       try {
-        // Buscar la respuesta
+        // Buscar la respuesta en la base de datos
         const response = await req.db.collection("respuestas").findOne({
           _id: new ObjectId(responseId)
         });
 
+        console.log("=== DEBUG USUARIO ===");
+        console.log("Respuesta encontrada:", response ? "SÍ" : "NO");
+
         if (response) {
-          userId = response.userId;
+          // OBTENER EMAIL Y NOMBRE DEL USUARIO DESDE LA RESPUESTA
+          // El email está en texto plano en response.user.mail
+          if (response.user && response.user.mail) {
+            userEmail = response.user.mail;
+            userName = response.user.nombre || "Usuario";
+            userId = response.user.uid;
 
-          // Buscar usuario
-          if (response.userId) {
-            const user = await req.db.collection("usuarios").findOne({
-              _id: new ObjectId(response.userId)
-            });
-
-            if (user) {
-              const { decrypt } = require("../utils/seguridad.helper");
-              userEmail = decrypt(user.mail);
-              userName = decrypt(user.nombre);
-            }
+            console.log("✅ Email obtenido de response.user.mail:", userEmail);
+            console.log("✅ Nombre obtenido:", userName);
+            console.log("✅ User ID obtenido:", userId);
+          } else {
+            console.log("⚠️ No se encontró response.user.mail en la respuesta");
+            console.log("Estructura de response.user:", response.user);
           }
 
-          // Buscar formulario
+          // OBTENER NOMBRE DEL FORMULARIO
           if (response.formId) {
             const form = await req.db.collection("forms").findOne({
               _id: new ObjectId(response.formId)
@@ -977,11 +988,24 @@ router.post("/upload-corrected-files", async (req, res) => {
 
             if (form && form.title) {
               formName = form.title;
+              console.log("✅ Nombre del formulario obtenido de DB:", formName);
+            } else {
+              // Fallback: usar formTitle del _contexto si existe
+              if (response._contexto && response._contexto.formTitle) {
+                formName = response._contexto.formTitle;
+                console.log("✅ Usando formTitle de _contexto:", formName);
+              }
             }
+          } else if (response._contexto && response._contexto.formTitle) {
+            // Si no hay formId, usar el del contexto
+            formName = response._contexto.formTitle;
+            console.log("✅ Usando formTitle de _contexto (sin formId):", formName);
           }
+        } else {
+          console.log("❌ No se encontró la respuesta con ID:", responseId);
         }
       } catch (userInfoError) {
-        console.error("Error obteniendo información:", userInfoError);
+        console.error("Error obteniendo información del usuario/formulario:", userInfoError);
       }
 
       // PROCESAR CADA ARCHIVO
@@ -1012,7 +1036,7 @@ router.post("/upload-corrected-files", async (req, res) => {
             },
             { returnDocument: 'after' }
           );
-          console.log(`Archivo agregado a DB. Total ahora:`, result.value?.correctedFiles?.length);
+          console.log(`✅ Archivo agregado a DB. Total ahora:`, result.value?.correctedFiles?.length);
         } else {
           await req.db.collection("aprobados").insertOne({
             responseId: responseId,
@@ -1022,11 +1046,11 @@ router.post("/upload-corrected-files", async (req, res) => {
             approvedAt: null,
             approvedBy: null
           });
-          console.log(`Nuevo documento creado en DB con 1 archivo`);
+          console.log(`✅ Nuevo documento creado en DB con 1 archivo`);
         }
       }
 
-      // ✅ ENVIAR CORREO DESPUÉS DE SUBIR A LA DB
+      // ✅ ENVIAR CORREO AL USUARIO DESPUÉS DE SUBIR A LA DB
       let emailSent = false;
       if (userEmail) {
         try {
@@ -1044,6 +1068,7 @@ router.post("/upload-corrected-files", async (req, res) => {
                     .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
                     .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
                     .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+                    .details { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; }
                     .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
                 </style>
             </head>
@@ -1053,31 +1078,37 @@ router.post("/upload-corrected-files", async (req, res) => {
                         <h1>Acciona Centro de Negocios</h1>
                     </div>
                     <div class="content">
-                        <h2>Documentos aprobados disponibles</h2>
-                        <p>Hola ${userName},</p>
-                        <p>Se han subido documentos aprobados para el formulario: <strong>${formName}</strong>.</p>
-                        <p>Puedes revisarlos ingresando a nuestro portal.</p>
+                        <h2>📄 Documentos aprobados disponibles</h2>
+                        <p>Estimado/a <strong>${userName}</strong>,</p>
+                        
+                        <div class="details">
+                            <p><strong>Formulario:</strong> ${formName}</p>
+                            <p><strong>Fecha de recepción:</strong> ${new Date().toLocaleDateString('es-CL')}</p>
+                            <p><strong>N° de respuesta:</strong> ${responseId}</p>
+                        </div>
+                        
+                        <p>Se han cargado documentos aprobados correspondientes a tu respuesta. 
+                        Ya puedes revisarlos y proceder con la firma digital.</p>
                         
                         <a href="${portalUrl}/respuestas/${responseId}" class="button">
-                            Ver documentos aprobados
+                            🔍 Ver documentos en el portal
                         </a>
                         
-                        <p>O copia y pega este enlace en tu navegador:</p>
-                        <p style="background-color: #f3f4f6; padding: 10px; border-radius: 4px; word-break: break-all;">
-                            ${portalUrl}/respuestas/${responseId}
-                        </p>
-                        
-                        <p><strong>Importante:</strong> Una vez que revises los documentos, podrás firmarlos digitalmente en el portal.</p>
+                        <p><small>O copia este enlace en tu navegador:<br>
+                        ${portalUrl}/respuestas/${responseId}</small></p>
                         
                         <div class="footer">
-                            <p>Este es un mensaje automático, por favor no responder a este correo.</p>
-                            <p>© ${new Date().getFullYear()} Acciona Centro de Negocios. Todos los derechos reservados.</p>
+                            <p>Este es un mensaje automático. Si tienes dudas, contacta a tu ejecutivo.</p>
+                            <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
                         </div>
                     </div>
                 </div>
             </body>
             </html>
           `;
+
+          console.log("📧 Enviando correo a:", userEmail);
+          console.log("📧 Asunto: Documentos aprobados disponibles - ${formName} - Acciona");
 
           await sendEmail({
             to: userEmail,
@@ -1103,6 +1134,7 @@ router.post("/upload-corrected-files", async (req, res) => {
               leido: false,
               createdAt: new Date()
             });
+            console.log(`✅ Notificación registrada en DB para usuario: ${userId}`);
           }
 
         } catch (emailError) {
@@ -1111,6 +1143,7 @@ router.post("/upload-corrected-files", async (req, res) => {
         }
       } else {
         console.log("⚠️ No se pudo obtener el email del usuario, no se envía correo");
+        console.log("response.user.mail era:", userEmail);
       }
 
       res.json({
@@ -1118,7 +1151,8 @@ router.post("/upload-corrected-files", async (req, res) => {
         message: `Archivo(s) subido(s) exitosamente a la base de datos`,
         filesProcessed: files.length,
         emailSent: emailSent,
-        uploadedToDB: true
+        uploadedToDB: true,
+        userNotified: emailSent
       });
     });
   } catch (error) {
@@ -1129,6 +1163,7 @@ router.post("/upload-corrected-files", async (req, res) => {
     });
   }
 });
+
 // 2. OBTENER TODOS LOS ARCHIVOS CORREGIDOS DE UNA RESPUESTA
 router.get("/corrected-files/:responseId", async (req, res) => {
   try {
