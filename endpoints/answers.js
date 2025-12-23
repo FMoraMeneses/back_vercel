@@ -865,6 +865,66 @@ router.get("/:id/finalized", async (req, res) => {
   }
 });
 
+// Endpoint de mantenimiento único para limpiar archivos de respuestas ya archivadas
+router.get("/mantenimiento/limpiar-archivos-archivados", async (req, res) => {
+  try {
+    // 1. Buscar todas las respuestas que ya están en estado "archivado"
+    const respuestasArchivadas = await req.db
+      .collection("respuestas")
+      .find({ status: "archivado" }, { projection: { _id: 1 } })
+      .toArray();
+
+    if (respuestasArchivadas.length === 0) {
+      return res.json({
+        success: true,
+        message: "No se encontraron respuestas archivadas para limpiar.",
+        stats: { aprobados: 0, adjuntos: 0, docxs: 0 }
+      });
+    }
+
+    // 2. Extraer los IDs en formato String y ObjectId
+    const idsString = respuestasArchivadas.map(r => r._id.toString());
+    const idsObjectId = respuestasArchivadas.map(r => r._id);
+
+    // 3. Ejecutar la eliminación masiva en las colecciones de archivos
+    // Usamos $in para borrar todos los documentos cuyos responseId coincidan con la lista
+    const [delAprobados, delAdjuntos, delDocxs] = await Promise.all([
+      req.db.collection("aprobados").deleteMany({ 
+        responseId: { $in: idsString } 
+      }),
+      req.db.collection("adjuntos").deleteMany({ 
+        responseId: { $in: idsObjectId } 
+      }),
+      req.db.collection("docxs").deleteMany({ 
+        responseId: { $in: idsString } 
+      })
+    ]);
+
+    const stats = {
+      respuestasProcesadas: respuestasArchivadas.length,
+      documentosEliminados: {
+        aprobados: delAprobados.deletedCount,
+        adjuntos: delAdjuntos.deletedCount,
+        docxs: delDocxs.deletedCount
+      }
+    };
+
+    console.log("Limpieza masiva de archivos archivados completada:", stats);
+
+    res.json({
+      success: true,
+      message: "Limpieza de histórico completada con éxito",
+      stats
+    });
+
+  } catch (err) {
+    console.error("Error en la limpieza masiva de archivos:", err);
+    res.status(500).json({ 
+      error: "Error durante el proceso de limpieza: " + err.message 
+    });
+  }
+});
+
 // Cambiar estado a archivado
 router.get("/:id/archived", async (req, res) => {
   try {
