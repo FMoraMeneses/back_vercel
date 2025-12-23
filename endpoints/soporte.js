@@ -113,7 +113,7 @@ router.post("/", async (req, res) => {
         return res.status(403).json({ error: `La empresa ${empresa} no está autorizada.` });
       }
     } else {
-      console.log(`Ticket creado con categoria estática: ${formId}`);
+      console.log(`Ticket creado: ${formId}`);
     }
 
     const result = await req.db.collection("soporte").insertOne({
@@ -139,27 +139,25 @@ router.post("/", async (req, res) => {
       await enviarCorreoRespaldo(correoRespaldo, formTitle, user, responses, form?.questions || []);
     }
 
-    // Notificaciones (RRHH y Admin)
     const notifData = {
-      titulo: `${usuario} de la empresa ${empresa} ha respondido el formulario ${formTitle}`,
+      titulo: `${usuario} de la empresa ${empresa} ha levantado un ticket de soporte`,
       descripcion: adjuntos.length > 0 ? `Incluye ${adjuntos.length} archivo(s)` : "Revisar en panel.",
       prioridad: 2,
       color: "#bb8900ff",
       icono: "form",
-      actionUrl: `/RespuestasForms?id=${result.insertedId}`,
+      actionUrl: `/Tickets?id=${result.insertedId}`,
     };
-    await addNotification(req.db, { filtro: { cargo: "RRHH" }, ...notifData });
-    await addNotification(req.db, { filtro: { cargo: "admin" }, ...notifData });
+    await addNotification(req.db, { filtro: { rol: "Admin" }, ...notifData });
 
     // Notificación al usuario
     await addNotification(req.db, {
       userId,
-      titulo: "Formulario completado",
-      descripcion: `El formulario ${formTitle} fue completado correctamente.`,
+      titulo: "Ticket enviado con éxito",
+      descripcion: `Se ha recibido correctamente su ticket. Su ID de solicitud es el ${result.insertedId}.`,
       prioridad: 2,
       icono: "CheckCircle",
       color: "#006e13ff",
-      actionUrl: `/?id=${result.insertedId}`,
+      actionUrl: `/soporte?id=${result.insertedId}`,
     });
 
     try {
@@ -388,6 +386,7 @@ router.get("/mini", async (req, res) => {
         "user.nombre": 1,
         "user.empresa": 1,
         status: 1,
+        assignedTo: 1,
         createdAt: 1,
         adjuntosCount: 1
       })
@@ -395,37 +394,16 @@ router.get("/mini", async (req, res) => {
 
     // Procesar las respuestas en JavaScript
     const answersProcessed = answers.map(answer => {
-      let trabajador = "No especificado";
-
-      if (answer.responses) {
-        trabajador = answer.responses["Nombre del trabajador"] ||
-          answer.responses["NOMBRE DEL TRABAJADOR"] ||
-          answer.responses["nombre del trabajador"] ||
-          answer.responses["Nombre del Trabajador"] ||
-          answer.responses["Nombre Del trabajador "] ||
-          "No especificado";
-      }
-
-      let rutTrabajador = "No especificado";
-
-      if (answer.responses) {
-        rutTrabajador = answer.responses["RUT del trabajador"] ||
-          answer.responses["RUT DEL TRABAJADOR"] ||
-          answer.responses["rut del trabajador"] ||
-          answer.responses["Rut del Trabajador"] ||
-          answer.responses["Rut Del trabajador "] ||
-          "No especificado";
-      }
-
       return {
         _id: answer._id,
         formId: answer.formId,
         formTitle: answer.formTitle,
-        trabajador: trabajador,
-        rutTrabajador: rutTrabajador,
+        trabajador: "No especificado",
+        rutTrabajador: "No especificado",
         submittedAt: answer.submittedAt,
         user: answer.user,
         status: answer.status,
+        assignedTo: answer.assignedTo,
         createdAt: answer.createdAt,
         adjuntosCount: answer.adjuntosCount || 0
       };
@@ -516,7 +494,7 @@ router.delete("/:id", async (req, res) => {
 router.put("/:id/status", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, assignedTo } = req.body;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ error: "ID de respuesta inválido" });
@@ -526,8 +504,7 @@ router.put("/:id/status", async (req, res) => {
       return res.status(400).json({ error: "Estado requerido" });
     }
 
-    // Validar estados permitidos
-    const estadosPermitidos = ['pendiente', 'en_revision', 'aprobado', 'firmado', 'finalizado', 'archivado'];
+    const estadosPermitidos = ['pendiente', 'en_revision', 'finalizado', 'archivado'];
     if (!estadosPermitidos.includes(status)) {
       return res.status(400).json({ error: "Estado no válido" });
     }
@@ -540,15 +517,17 @@ router.put("/:id/status", async (req, res) => {
       return res.status(404).json({ error: "Respuesta no encontrada" });
     }
 
-    // Configurar campos según el estado
     const updateData = {
       status: status,
       updatedAt: new Date()
     };
 
-    // Agregar timestamp específico según el estado
     if (status === 'en_revision') {
       updateData.reviewedAt = new Date();
+      if (assignedTo) {
+        updateData.assignedTo = assignedTo;
+        updateData.assignedAt = new Date();
+      }
     } else if (status === 'aprobado') {
       updateData.approvedAt = new Date();
     } else if (status === 'firmado') {
