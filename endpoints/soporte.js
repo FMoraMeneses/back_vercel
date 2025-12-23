@@ -103,16 +103,19 @@ router.post("/", async (req, res) => {
       return res.status(401).json({ error: tokenValido.reason });
     }
 
-    const form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
-    if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
+    let form = null;
+    if (ObjectId.isValid(formId)) {
+      form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
+      if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
 
-    const empresaAutorizada = form.companies?.includes(empresa) || form.companies?.includes("Todas");
-    if (!empresaAutorizada) {
-      return res.status(403).json({ error: `La empresa ${empresa} no está autorizada.` });
+      const empresaAutorizada = form.companies?.includes(empresa) || form.companies?.includes("Todas");
+      if (!empresaAutorizada) {
+        return res.status(403).json({ error: `La empresa ${empresa} no está autorizada.` });
+      }
+    } else {
+      console.log(`Ticket creado con categoria estática: ${formId}`);
     }
 
-    // Insertar respuesta principal. 
-    // Nota: El objeto 'user' aquí se guarda como viene, pero el mail se busca por Blind Index si fuera necesario.
     const result = await req.db.collection("soporte").insertOne({
       formId,
       user,
@@ -133,7 +136,7 @@ router.post("/", async (req, res) => {
 
     // Enviar correo de respaldo
     if (correoRespaldo && correoRespaldo.trim() !== '') {
-      await enviarCorreoRespaldo(correoRespaldo, formTitle, user, responses, form.questions);
+      await enviarCorreoRespaldo(correoRespaldo, formTitle, user, responses, form?.questions || []);
     }
 
     // Notificaciones (RRHH y Admin)
@@ -160,7 +163,7 @@ router.post("/", async (req, res) => {
     });
 
     try {
-      await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form.section, {
+      await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form?.section || "Soporte General", {
         nombre: usuario,
         empresa: empresa,
         uid: userId,
