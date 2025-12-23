@@ -29,12 +29,10 @@ router.post('/', async (req, res) => {
       icono = 'paper',
       actionUrl = null,
       destinatarios,
-      enviarNotificacion = true,
-      enviarCorreo = false,
+      enviarCorreo,
     } = req.body;
 
-    const urlNotificaciones =
-    actionUrl || "https://infoacciona.cl/";
+    const urlNotificaciones = actionUrl || "https://infoacciona.cl/";
 
 
     // Validaciones básicas
@@ -205,29 +203,33 @@ router.post('/', async (req, res) => {
           totalEnviados++;
           console.log(`Enviado a ${userId}`);
 
-              // 📧 ENVÍO DE CORREO
-           if (enviarCorreo) {
-           const user = await db
-          .collection("usuarios")
-          .findOne({ _id: new ObjectId(userId) });
-
-           if (user?.email) {
-            await sendEmail({
-           to: user.email,
-           subject: "Tienes nueva información en la plataforma de recursos humanos",
-           html: `
-            <p>${descripcion}</p>
-            <br/>
-            <a 
-              href="${urlNotificaciones}" 
-              style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;"
-            >
-              Ver notificación en la plataforma
-            </a>
-          `
-           });
-           }
-         }
+           // ENVÍO DE CORREO
+           if (enviarCorreo === true) {
+            const user = await db
+              .collection("usuarios")
+              .findOne({ _id: new ObjectId(userId) });
+          
+            if (user?.email) {
+              try {
+                await sendEmail({
+                  to: user.email,
+                  subject: "Tienes nueva información en la plataforma de recursos humanos",
+                  html: `
+                    <p>${descripcion}</p>
+                    <br/>
+                    <a 
+                      href="${urlNotificaciones}" 
+                      style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;"
+                    >
+                      Ver notificación en la plataforma
+                    </a>
+                  `
+                });
+              } catch (emailError) {
+                console.error("⚠️ Error enviando correo:", emailError.message);
+              }
+            }
+          }
 
 
         } catch (error) {
