@@ -358,6 +358,7 @@ router.get("/mail/:mail", async (req, res) => {
       formId: answer.formId,
       formTitle: answer.formTitle,
       trabajador: answer.responses?.["Nombre del trabajador"] || "No especificado",
+      responses: answer.responses,
       user: answer.user,
       status: answer.status,
       createdAt: answer.createdAt,

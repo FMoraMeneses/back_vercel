@@ -162,8 +162,8 @@ router.put("/:id", async (req, res) => {
       { returnDocument: "after" }
     );
 
-    if (!result.value) return res.status(404).json({ error: "Formulario no encontrado" });
-    res.json(result.value);
+    if (!result) return res.status(404).json({ error: "Formulario no encontrado" });
+    res.json(result.value || result);
   } catch (err) {
     res.status(500).json({ error: "Error al actualizar formulario" });
   }
