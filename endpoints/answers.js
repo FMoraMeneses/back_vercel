@@ -756,7 +756,7 @@ router.post("/chat", async (req, res) => {
         // ENVIAR CORREO SI TENEMOS EMAIL
         if (userEmail) {
           const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
-          const responseUrl = `${baseUrl}/RespuestasForms?id=${respuestaId}`;
+          const responseUrl = `${baseUrl}/?id=${respuestaId}`;
 
           const emailHtml = `
             <!DOCTYPE html>
@@ -1265,7 +1265,7 @@ router.post("/upload-corrected-files", async (req, res) => {
       if (userEmail) {
         try {
           const { sendEmail } = require("../utils/mail.helper");
-          const portalUrl = process.env.PORTAL_URL || "https://tuportal.com";
+          const portalUrl = process.env.PORTAL_URL || "infoacciona.cl";
 
           const emailHtml = `
             <!DOCTYPE html>
