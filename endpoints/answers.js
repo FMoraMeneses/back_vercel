@@ -1265,7 +1265,9 @@ router.post("/upload-corrected-files", async (req, res) => {
       if (userEmail) {
         try {
           const { sendEmail } = require("../utils/mail.helper");
-          const portalUrl = process.env.PORTAL_URL || "infoacciona.cl";
+          const portalUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
+          const responseUrl = `${baseUrl}/?id=${responseId}`;
+
 
           const emailHtml = `
             <!DOCTYPE html>
@@ -1300,12 +1302,12 @@ router.post("/upload-corrected-files", async (req, res) => {
                         <p>Se han cargado documentos aprobados correspondientes a tu respuesta. 
                         Ya puedes revisarlos y proceder con la firma digital.</p>
                         
-                        <a href="${portalUrl}/respuestas/${responseId}" class="button">
+                        <a href="${portalUrl}${responseId}" class="button">
                             🔍 Ver documentos en el portal
                         </a>
                         
                         <p><small>O copia este enlace en tu navegador:<br>
-                        ${portalUrl}/respuestas/${responseId}</small></p>
+                        ${portalUrl}${responseId}</small></p>
                         
                         <div class="footer">
                             <p>Este es un mensaje automático. Si tienes dudas, contacta a tu ejecutivo.</p>
