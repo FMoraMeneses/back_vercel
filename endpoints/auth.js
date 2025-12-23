@@ -1070,61 +1070,82 @@ router.post("/set-password", async (req, res) => {
 router.get("/empresas/todas", async (req, res) => {
   try {
     const empresas = await req.db.collection("empresas").find().toArray();
-    res.json(empresas);
+    
+    const empresasDescifradas = empresas.map(emp => ({
+      ...emp,
+      nombre: decrypt(emp.nombre),
+      rut: decrypt(emp.rut),
+      direccion: decrypt(emp.direccion),
+      encargado: decrypt(emp.encargado),
+      rut_encargado: decrypt(emp.rut_encargado),
+      // No desciframos el logo aquí para no saturar la respuesta de la lista
+      logo: emp.logo ? { ...emp.logo, fileData: undefined } : null 
+    }));
+
+    res.json(empresasDescifradas);
   } catch (err) {
-    console.error("Error obteniendo empresas:", err);
     res.status(500).json({ error: "Error al obtener empresas" });
   }
 });
 
+// GET - Obtener empresa por ID
 router.get("/empresas/:id", async (req, res) => {
   try {
     const empresa = await req.db.collection("empresas").findOne({
       _id: new ObjectId(req.params.id)
     });
 
-    if (!empresa) {
-      return res.status(404).json({ error: "Empresa no encontrada" });
+    if (!empresa) return res.status(404).json({ error: "Empresa no encontrada" });
+
+    // Desciframos todos los campos para la vista de detalle
+    const descifrada = {
+      ...empresa,
+      nombre: decrypt(empresa.nombre),
+      rut: decrypt(empresa.rut),
+      direccion: decrypt(empresa.direccion),
+      encargado: decrypt(empresa.encargado),
+      rut_encargado: decrypt(empresa.rut_encargado)
+    };
+
+    if (descifrada.logo && descifrada.logo.fileData) {
+      descifrada.logo.fileData = decrypt(descifrada.logo.fileData);
     }
 
-    res.json(empresa);
+    res.json(descifrada);
   } catch (err) {
-    console.error("Error obteniendo empresa:", err);
     res.status(500).json({ error: "Error al obtener empresa" });
   }
 });
 
+// POST - Registrar nueva empresa (Escritura cifrada)
 router.post("/empresas/register", upload.single('logo'), async (req, res) => {
   try {
-    console.log("Debug: Iniciando registro de empresa");
-    console.log("Debug: Datos recibidos:", req.body);
-
     const { nombre, rut, direccion, encargado, rut_encargado } = req.body;
+    if (!nombre || !rut) return res.status(400).json({ error: "Nombre y RUT obligatorios" });
 
-    if (!nombre || !rut) {
-      return res.status(400).json({ error: "Nombre y RUT son obligatorios" });
-    }
+    const nombreLimpio = nombre.trim();
+    const rutLimpio = rut.trim();
 
+    // Búsqueda por Blind Index para evitar duplicados sin descifrar
     const empresaExistente = await req.db.collection("empresas").findOne({
       $or: [
-        { nombre: nombre.trim() },
-        { rut: rut.trim() }
+        { nombre_index: createBlindIndex(nombreLimpio) },
+        { rut_index: createBlindIndex(rutLimpio) }
       ]
     });
 
     if (empresaExistente) {
-      const campoDuplicado = empresaExistente.nombre === nombre.trim() ? 'nombre' : 'RUT';
-      return res.status(400).json({
-        error: `Ya existe una empresa con el mismo ${campoDuplicado}`
-      });
+      return res.status(400).json({ error: "Ya existe una empresa con ese nombre o RUT" });
     }
 
     const empresaData = {
-      nombre: nombre.trim(),
-      rut: rut.trim(),
-      direccion: direccion ? direccion.trim() : '',
-      encargado: encargado ? encargado.trim() : '',
-      rut_encargado: rut_encargado ? rut_encargado.trim() : '',
+      nombre: encrypt(nombreLimpio),
+      nombre_index: createBlindIndex(nombreLimpio),
+      rut: encrypt(rutLimpio),
+      rut_index: createBlindIndex(rutLimpio),
+      direccion: encrypt(direccion || ''),
+      encargado: encrypt(encargado || ''),
+      rut_encargado: encrypt(rut_encargado || ''),
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -1132,7 +1153,7 @@ router.post("/empresas/register", upload.single('logo'), async (req, res) => {
     if (req.file) {
       empresaData.logo = {
         fileName: req.file.originalname,
-        fileData: req.file.buffer,
+        fileData: encrypt(req.file.buffer.toString('base64')),
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
         uploadedAt: new Date()
@@ -1140,46 +1161,34 @@ router.post("/empresas/register", upload.single('logo'), async (req, res) => {
     }
 
     const result = await req.db.collection("empresas").insertOne(empresaData);
-
-    console.log("Debug: Empresa registrada exitosamente, ID:", result.insertedId);
-
-    const nuevaEmpresa = await req.db.collection("empresas").findOne({
-      _id: result.insertedId
-    });
-
-    res.status(201).json({
-      message: "Empresa registrada exitosamente",
-      empresa: nuevaEmpresa
-    });
+    res.status(201).json({ success: true, id: result.insertedId });
 
   } catch (err) {
-    console.error("Error registrando empresa:", err);
-
-    if (err.code === 11000) {
-      return res.status(400).json({ error: "Empresa duplicada" });
-    }
-
-    res.status(500).json({ error: "Error al registrar empresa: " + err.message });
+    res.status(500).json({ error: "Error al registrar: " + err.message });
   }
 });
 
+// PUT - Actualizar empresa
 router.put("/empresas/:id", upload.single('logo'), async (req, res) => {
   try {
     const { nombre, rut, direccion, encargado, rut_encargado } = req.body;
+    const id = new ObjectId(req.params.id);
 
     const updateData = {
-      nombre: nombre.trim(),
-      rut: rut.trim(),
-      direccion: direccion ? direccion.trim() : '',
-      encargado: encargado ? encargado.trim() : '',
-      rut_encargado: rut_encargado ? rut_encargado.trim() : '',
+      nombre: encrypt(nombre.trim()),
+      nombre_index: createBlindIndex(nombre.trim()),
+      rut: encrypt(rut.trim()),
+      rut_index: createBlindIndex(rut.trim()),
+      direccion: encrypt(direccion || ''),
+      encargado: encrypt(encargado || ''),
+      rut_encargado: encrypt(rut_encargado || ''),
       updatedAt: new Date()
     };
 
     if (req.file) {
       updateData.logo = {
         fileName: req.file.originalname,
-        fileData: req.file.buffer,
+        fileData: encrypt(req.file.buffer.toString('base64')),
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
         uploadedAt: new Date()
@@ -1188,45 +1197,61 @@ router.put("/empresas/:id", upload.single('logo'), async (req, res) => {
       updateData.logo = null;
     }
 
-    const result = await req.db.collection("empresas").updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: updateData }
-    );
+    const result = await req.db.collection("empresas").updateOne({ _id: id }, { $set: updateData });
+    if (result.matchedCount === 0) return res.status(404).json({ error: "No encontrada" });
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Empresa no encontrada" });
-    }
-
-    const empresaActualizada = await req.db.collection("empresas").findOne({
-      _id: new ObjectId(req.params.id)
-    });
-
-    res.json({
-      message: "Empresa actualizada exitosamente",
-      empresa: empresaActualizada
-    });
-
+    res.json({ success: true, message: "Empresa actualizada" });
   } catch (err) {
-    console.error("Error actualizando empresa:", err);
-    res.status(500).json({ error: "Error al actualizar empresa" });
+    res.status(500).json({ error: "Error al actualizar" });
   }
 });
 
+// DELETE - Eliminar empresa
 router.delete("/empresas/:id", async (req, res) => {
   try {
-    const result = await req.db.collection("empresas").deleteOne({
-      _id: new ObjectId(req.params.id)
-    });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ error: "Empresa no encontrada" });
-    }
-
+    const result = await req.db.collection("empresas").deleteOne({ _id: new ObjectId(req.params.id) });
+    if (result.deletedCount === 0) return res.status(404).json({ error: "No encontrada" });
     res.json({ message: "Empresa eliminada exitosamente" });
-
   } catch (err) {
-    console.error("Error eliminando empresa:", err);
-    res.status(500).json({ error: "Error al eliminar empresa" });
+    res.status(500).json({ error: "Error al eliminar" });
+  }
+});
+
+router.get("/mantenimiento/migrar-empresas-pqc", async (req, res) => {
+  try {
+    const empresas = await req.db.collection("empresas").find().toArray();
+    let cont = 0;
+
+    for (let emp of empresas) {
+      const updates = {};
+      
+      // Cifrar campos de texto si no tienen el formato cifrado "iv:tag:data"
+      if (emp.nombre && !emp.nombre.includes(':')) {
+        updates.nombre = encrypt(emp.nombre);
+        updates.nombre_index = createBlindIndex(emp.nombre);
+      }
+      if (emp.rut && !emp.rut.includes(':')) {
+        updates.rut = encrypt(emp.rut);
+        updates.rut_index = createBlindIndex(emp.rut);
+      }
+      if (emp.direccion && !emp.direccion.includes(':')) updates.direccion = encrypt(emp.direccion);
+      if (emp.encargado && !emp.encargado.includes(':')) updates.encargado = encrypt(emp.encargado);
+      if (emp.rut_encargado && !emp.rut_encargado.includes(':')) updates.rut_encargado = encrypt(emp.rut_encargado);
+
+      // Cifrar el logo si existe y es un Buffer/Base64 plano
+      if (emp.logo && emp.logo.fileData && !emp.logo.fileData.toString().includes(':')) {
+        const dataStr = Buffer.isBuffer(emp.logo.fileData) ? emp.logo.fileData.toString('base64') : emp.logo.fileData;
+        updates["logo.fileData"] = encrypt(dataStr);
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await req.db.collection("empresas").updateOne({ _id: emp._id }, { $set: updates });
+        cont++;
+      }
+    }
+    res.json({ success: true, message: `Empresas migradas: ${cont}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
