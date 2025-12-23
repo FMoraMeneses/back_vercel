@@ -1079,7 +1079,7 @@ router.get("/empresas/todas", async (req, res) => {
       encargado: decrypt(emp.encargado),
       rut_encargado: decrypt(emp.rut_encargado),
       // No desciframos el logo aquí para no saturar la respuesta de la lista
-      logo: emp.logo ? { ...emp.logo, fileData: undefined } : null 
+      logo: decrypt(emp.logo) ? { ...emp.logo, fileData: undefined } : null 
     }));
 
     res.json(empresasDescifradas);
