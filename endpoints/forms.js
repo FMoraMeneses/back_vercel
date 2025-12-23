@@ -50,11 +50,11 @@ router.post("/", async (req, res) => {
         { returnDocument: "after" }
       );
 
-      if (!result.value) {
+      if (!result) {
         return res.status(404).json({ error: "Formulario no encontrado" });
       }
 
-      res.status(200).json(result.value);
+      res.status(200).json(result.value || result);
     }
 
   } catch (err) {
