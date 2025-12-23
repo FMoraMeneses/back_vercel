@@ -3,6 +3,7 @@ const router = express.Router();
 const { ObjectId } = require("mongodb");
 const { addNotification } = require("../utils/notificaciones.helper");
 const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
+const { sendEmail } = require("../utils/mail.helper");
 
 // Nuevo endpoint para obtener información del documento por responseId
 // MODIFICAR el endpoint POST para no almacenar en BD
@@ -27,8 +28,14 @@ router.post('/', async (req, res) => {
       color = '#f5872dff',
       icono = 'paper',
       actionUrl = null,
-      destinatarios
+      destinatarios,
+      enviarNotificacion = true,
+      enviarCorreo = false,
     } = req.body;
+
+    const urlNotificaciones =
+    actionUrl || "https://infoacciona.cl/";
+
 
     // Validaciones básicas
     if (!titulo || !descripcion) {
@@ -66,9 +73,40 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
+      if (enviarCorreo) {
+        const usuarios = await db
+          .collection("usuarios")
+          .find({ estado: "activo", email: { $exists: true } })
+          .project({ email: 1 })
+          .toArray();
+    
+        for (const user of usuarios.slice(0, 10)) {
+          await sendEmail({
+            to: user.email,
+            subject: "Tienes nueva información en la plataforma de recursos humanos",
+            html: `
+              <p>${descripcion}</p>
+              <br/>
+              <a 
+                href="${urlNotificaciones}" 
+                style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;"
+              >
+                Ver notificación en la plataforma
+              </a>
+            `
+          });
+          
+        }
+      }
+
+
+
       console.log('Notificación enviada a todos:', resultadoEnvio);
 
-    } else if (destinatarios.tipo === 'filtro') {
+
+
+    } 
+    else if (destinatarios.tipo === 'filtro') {
       console.log('📨 Enviando por FILTROS:', destinatarios.filtro);
 
       const filtro = destinatarios.filtro || {};
@@ -104,6 +142,36 @@ router.post('/', async (req, res) => {
         actionUrl
       });
 
+              // 📧 ENVÍO DE CORREO
+        if (enviarCorreo) {
+          const usuarios = await db
+            .collection("usuarios")
+            .find(condicionesFiltro)
+            .project({ email: 1 })
+            .toArray();
+
+          for (const user of usuarios.slice(0, 10)) { // límite del helper
+            if (!user.email) continue;
+
+            await sendEmail({
+              to: user.email,
+              subject: "Tienes nueva información en la plataforma de recursos humanos",
+              html: `
+                <p>${descripcion}</p>
+                <br/>
+                <a 
+                  href="${urlNotificaciones}" 
+                  style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;"
+                >
+                  Ver notificación en la plataforma
+                </a>
+              `
+            });
+          }
+        }
+      
+
+
       console.log('Notificación enviada por filtro:', resultadoEnvio);
 
     } else if (destinatarios.tipo === 'manual') {
@@ -136,6 +204,31 @@ router.post('/', async (req, res) => {
 
           totalEnviados++;
           console.log(`Enviado a ${userId}`);
+
+              // 📧 ENVÍO DE CORREO
+           if (enviarCorreo) {
+           const user = await db
+          .collection("usuarios")
+          .findOne({ _id: new ObjectId(userId) });
+
+           if (user?.email) {
+            await sendEmail({
+           to: user.email,
+           subject: "Tienes nueva información en la plataforma de recursos humanos",
+           html: `
+            <p>${descripcion}</p>
+            <br/>
+            <a 
+              href="${urlNotificaciones}" 
+              style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;"
+            >
+              Ver notificación en la plataforma
+            </a>
+          `
+           });
+           }
+         }
+
 
         } catch (error) {
           totalErrores++;
