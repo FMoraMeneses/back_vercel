@@ -755,8 +755,8 @@ router.post("/chat", async (req, res) => {
 
         // ENVIAR CORREO SI TENEMOS EMAIL
         if (userEmail) {
-          const portalUrl = process.env.PORTAL_URL || "https://tuportal.com";
-          const chatUrl = `${portalUrl}/respuestas/${respuestaId}?tab=messages`;
+          const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
+          const responseUrl = `${baseUrl}/RespuestasForms?id=${respuestaId}`;
 
           const emailHtml = `
             <!DOCTYPE html>
@@ -800,11 +800,11 @@ router.post("/chat", async (req, res) => {
           })}</p>
                         </div>
                         
-                        <p>Para ver el mensaje completo y responder, haz clic en el siguiente botón:</p>
+                        <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
                         
                         <div style="text-align: center; margin: 30px 0;">
-                            <a href="${chatUrl}" class="button">
-                                💬 Ir al chat de mensajes
+                            <a href="${responseUrl}" class="button">
+                                📋 Ver detalles de la solicitud
                             </a>
                         </div>
                         
@@ -812,11 +812,12 @@ router.post("/chat", async (req, res) => {
                         
                         <p style="font-size: 14px; color: #6b7280;">
                             Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
-                            <a href="${chatUrl}" style="color: #4f46e5; word-break: break-all;">${chatUrl}</a>
+                            <a href="${responseUrl}" style="color: #4f46e5; word-break: break-all;">${responseUrl}</a>
                         </p>
                         
                         <div class="footer">
                             <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
+                            <p>Una vez en la plataforma, puedes acceder a los mensajes desde la sección de chat.</p>
                             <p>Por favor, no responder a este correo.</p>
                             <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
                         </div>
@@ -831,11 +832,12 @@ router.post("/chat", async (req, res) => {
 
           await sendEmail({
             to: userEmail,
-            subject: `💬 Nuevo mensaje - Plataforma RRHH - ${formName}`,
+            subject: `📋 Nuevo mensaje - Plataforma RRHH - ${formName}`,
             html: emailHtml
           });
 
           console.log(`Correo enviado exitosamente a: ${userEmail}`);
+          console.log(`URL de respuesta: ${responseUrl}`);
         }
       } catch (emailError) {
         console.error("Error enviando correo:", emailError);
