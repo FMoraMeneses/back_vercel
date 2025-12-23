@@ -12,6 +12,7 @@ const noti = require("./endpoints/notificaciones");
 const menu = require("./endpoints/web");
 const plantillas = require("./endpoints/plantillas");
 const anunciosRouter = require("./endpoints/anuncios");
+const soporteRoutes = require("./endpoints/soporte");
 const app = express();
 
 app.use(express.json({ limit: '4mb' }));
@@ -61,6 +62,7 @@ app.use("/api/noti", noti);
 app.use("/api/menu", menu);
 app.use("/api/plantillas", plantillas);
 app.use("/api/anuncios", anunciosRouter);
+app.use("/api/soporte", soporteRoutes);
 
 // Ruta base
 app.get("/", (req, res) => {
