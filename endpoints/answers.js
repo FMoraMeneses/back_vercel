@@ -1887,15 +1887,49 @@ router.post("/:id/regenerate-document", async (req, res) => {
     console.log(`Regenerando documento para formulario: ${form.title}`);
 
     try {
+      // Si el usuario en la respuesta tiene datos cifrados, descifrarlos
+      let nombreUsuario = respuesta.user?.nombre;
+      let empresaUsuario = respuesta.user?.empresa;
+      let uidUsuario = respuesta.user?.uid;
+      let mailUsuario = respuesta.user?.mail;
+
+      // Intentar descifrar el nombre si parece estar cifrado
+      if (nombreUsuario && nombreUsuario.includes(':')) {
+        try {
+          nombreUsuario = decrypt(nombreUsuario);
+        } catch (decryptError) {
+          console.log("No se pudo descifrar nombre de usuario:", decryptError);
+        }
+      }
+
+      // Intentar descifrar la empresa si parece estar cifrada
+      if (empresaUsuario && empresaUsuario.includes(':')) {
+        try {
+          empresaUsuario = decrypt(empresaUsuario);
+        } catch (decryptError) {
+          console.log("No se pudo descifrar empresa de usuario:", decryptError);
+        }
+      }
+
+      // Intentar descifrar el mail si parece estar cifrado
+      if (mailUsuario && mailUsuario.includes(':')) {
+        try {
+          mailUsuario = decrypt(mailUsuario);
+        } catch (decryptError) {
+          console.log("No se pudo descifrar mail de usuario:", decryptError);
+        }
+      }
+
       await generarAnexoDesdeRespuesta(
         respuesta.responses,
         respuesta._id.toString(),
         req.db,
         form.section,
         {
-          nombre: respuesta.user?.nombre,
-          empresa: respuesta.user?.empresa,
-          uid: respuesta.user?.uid
+          nombre: nombreUsuario,
+          empresa: empresaUsuario,
+          uid: uidUsuario,
+          mail: mailUsuario
         },
         respuesta.formId,
         respuesta.formTitle
