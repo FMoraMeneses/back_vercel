@@ -1230,7 +1230,7 @@ router.get("/empresas/todas", async (req, res) => {
       direccion: decrypt(emp.direccion),
       encargado: decrypt(emp.encargado),
       rut_encargado: decrypt(emp.rut_encargado),
-      logo: emp.logo ? { ...emp.logo, fileData: undefined } : null
+      logo: emp.logo ? { ...emp.logo, fileData: decrypt(emp.logo.fileData) } : null
     }));
 
     res.json(empresasDescifradas);
