@@ -715,58 +715,19 @@ router.get("/:formId/chat/", async (req, res) => {
 //enviar mensaje
 router.post("/chat", async (req, res) => {
   try {
-    console.log("=== DEBUG INICIO ENDPOINT /chat ===");
-    console.log("📦 Body recibido:", JSON.stringify(req.body, null, 2));
-    console.log("📦 Headers:", req.headers);
-
     const { formId, autor, mensaje, admin, sendToEmail } = req.body;
-
-    console.log("📋 Campos extraídos:");
-    console.log("- formId:", formId);
-    console.log("- autor:", autor);
-    console.log("- mensaje:", mensaje ? `${mensaje.substring(0, 50)}...` : "vacío");
-    console.log("- admin:", admin);
-    console.log("- sendToEmail:", sendToEmail);
-
-    if (!autor || !mensaje || !formId) {
-      console.log("❌ Faltan campos requeridos");
-      return res.status(400).json({ error: "Faltan campos" });
-    }
+    if (!autor || !mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
 
     const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
-    console.log("💬 Nuevo mensaje creado:", nuevoMensaje);
 
     let query = ObjectId.isValid(formId) ? { $or: [{ _id: new ObjectId(formId) }, { formId }] } : { formId };
-    console.log("🔍 Query para buscar respuesta:", query);
-
     const respuesta = await req.db.collection("respuestas").findOne(query);
-
-    console.log("📊 Resultado búsqueda respuesta:");
-    console.log("- Encontrada:", respuesta ? "SÍ" : "NO");
-    if (respuesta) {
-      console.log("- Respuesta ID:", respuesta._id);
-      console.log("- Respuesta user object:", respuesta.user ? JSON.stringify(respuesta.user, null, 2) : "null");
-      console.log("- Respuesta mail:", respuesta.mail || "no tiene");
-      console.log("- Respuesta user.mail:", respuesta.user?.mail || "no tiene");
-      console.log("- Respuesta user.nombre:", respuesta.user?.nombre || "no tiene");
-    }
-
-    if (!respuesta) {
-      console.log("❌ Respuesta no encontrada");
-      return res.status(404).json({ error: "Respuesta no encontrada" });
-    }
+    if (!respuesta) return res.status(404).json({ error: "Respuesta no encontrada" });
 
     await req.db.collection("respuestas").updateOne({ _id: respuesta._id }, { $push: { mensajes: nuevoMensaje } });
-    console.log("✅ Mensaje guardado en BD");
 
     // ENVIAR CORREO SI ESTÁ MARCADO EL CHECKBOX Y NO ES MENSAJE DE ADMIN
-    console.log("📧 Verificación envío de correo:");
-    console.log("- sendToEmail:", sendToEmail);
-    console.log("- admin:", admin);
-    console.log("- Condición (sendToEmail === true && admin !== true):", sendToEmail === true && admin !== true);
-
     if (sendToEmail === true && admin !== true) {
-      console.log("🚀 INICIANDO PROCESO DE ENVÍO DE CORREO");
       try {
         // OBTENER DATOS PARA EL CORREO
         let userEmail = null;
@@ -774,186 +735,118 @@ router.post("/chat", async (req, res) => {
         let userName = autor;
         let respuestaId = respuesta._id.toString();
 
-        console.log("🔍 BUSCANDO EMAIL DEL USUARIO:");
-        console.log("- respuesta.user:", respuesta.user);
-        console.log("- respuesta.user.mail:", respuesta.user?.mail);
-        console.log("- respuesta.mail:", respuesta.mail);
-
         // OBTENER EMAIL DEL USUARIO (CLIENTE) DESDE LA RESPUESTA
         if (respuesta.user && respuesta.user.mail) {
           userEmail = respuesta.user.mail;
           userName = respuesta.user.nombre || autor;
-          console.log("✅ Email obtenido de respuesta.user.mail:", userEmail);
-          console.log("✅ Nombre obtenido:", userName);
-        } else {
-          console.log("❌ No se encontró respuesta.user.mail");
-          console.log("Estructura completa de respuesta.user:", JSON.stringify(respuesta.user, null, 2));
         }
 
         // OBTENER NOMBRE DEL FORMULARIO
-        console.log("🔍 BUSCANDO NOMBRE DEL FORMULARIO:");
-        console.log("- respuesta.formId:", respuesta.formId);
-        console.log("- respuesta._contexto:", respuesta._contexto);
-        console.log("- respuesta._contexto?.formTitle:", respuesta._contexto?.formTitle);
-        console.log("- respuesta.formTitle:", respuesta.formTitle);
-
         if (respuesta.formId) {
           const form = await req.db.collection("forms").findOne({
             _id: new ObjectId(respuesta.formId)
           });
-
-          console.log("🔍 Formulario encontrado en BD:", form ? "SÍ" : "NO");
           if (form && form.title) {
             formName = form.title;
-            console.log("✅ Nombre del formulario obtenido de DB:", formName);
-          } else {
-            console.log("⚠️ Formulario no encontrado o sin título");
           }
         } else if (respuesta._contexto && respuesta._contexto.formTitle) {
           formName = respuesta._contexto.formTitle;
-          console.log("✅ Usando formTitle de _contexto:", formName);
-        } else if (respuesta.formTitle) {
-          formName = respuesta.formTitle;
-          console.log("✅ Usando formTitle directo:", formName);
         }
-
-        console.log("📋 RESUMEN DATOS CORREO:");
-        console.log("- userEmail:", userEmail);
-        console.log("- userName:", userName);
-        console.log("- formName:", formName);
-        console.log("- respuestaId:", respuestaId);
 
         // ENVIAR CORREO SI TENEMOS EMAIL
         if (userEmail) {
-          // Validar formato de email
-          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-          const esEmailValido = emailRegex.test(userEmail);
+          const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
+          const responseUrl = `${baseUrl}/?id=${respuestaId}`;
 
-          console.log("📧 VALIDACIÓN EMAIL:");
-          console.log("- Email a enviar:", userEmail);
-          console.log("- ¿Es válido?:", esEmailValido);
+          const emailHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                    .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
+                    .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+                    .button:hover { background-color: #4338ca; }
+                    .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
+                    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+                    .title { color: #1f2937; font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+                    .hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>Acciona Centro de Negocios</h1>
+                    </div>
+                    <div class="content">
+                        <h2 class="title">Tienes un nuevo mensaje en la plataforma de Recursos Humanos</h2>
+                        
+                        <p>Estimado/a <strong>${userName}</strong>,</p>
+                        
+                        <div class="message-box">
+                            <p><strong>Formulario:</strong> ${formName}</p>
+                            <p><strong>De:</strong> ${autor}</p>
+                            <p><strong>Mensaje:</strong> "${mensaje}"</p>
+                            <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          })}</p>
+                        </div>
+                        
+                        <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${responseUrl}" class="button">
+                                📋 Ver detalles de la solicitud
+                            </a>
+                        </div>
+                        
+                        <div class="hr"></div>
+                        
+                        <p style="font-size: 14px; color: #6b7280;">
+                            Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+                            <a href="${responseUrl}" style="color: #4f46e5; word-break: break-all;">${responseUrl}</a>
+                        </p>
+                        
+                        <div class="footer">
+                            <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
+                            <p>Una vez en la plataforma, puedes acceder a los mensajes desde la sección de chat.</p>
+                            <p>Por favor, no responder a este correo.</p>
+                            <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+          `;
 
-          if (!esEmailValido) {
-            console.log("❌ Email no válido, no se enviará correo");
-          } else {
-            const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
-            const responseUrl = `${baseUrl}/?id=${respuestaId}`;
+          // USAR LA MISMA FUNCIÓN DE ENVÍO DE CORREOS QUE EN upload-corrected-files
+          const { sendEmail } = require("../utils/mail.helper");
 
-            console.log("🌐 URL generada:", responseUrl);
-            console.log("PORTAL_URL environment:", process.env.PORTAL_URL);
+          await sendEmail({
+            to: userEmail,
+            subject: `📋 Nuevo mensaje - Plataforma RRHH - ${formName}`,
+            html: emailHtml
+          });
 
-            const emailHtml = `
-              <!DOCTYPE html>
-              <html>
-              <head>
-                  <meta charset="UTF-8">
-                  <style>
-                      body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                      .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                      .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-                      .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
-                      .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
-                      .button:hover { background-color: #4338ca; }
-                      .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
-                      .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
-                      .title { color: #1f2937; font-size: 20px; font-weight: bold; margin-bottom: 20px; }
-                      .hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
-                  </style>
-              </head>
-              <body>
-                  <div class="container">
-                      <div class="header">
-                          <h1>Acciona Centro de Negocios</h1>
-                      </div>
-                      <div class="content">
-                          <h2 class="title">Tienes un nuevo mensaje en la plataforma de Recursos Humanos</h2>
-                          
-                          <p>Estimado/a <strong>${userName}</strong>,</p>
-                          
-                          <div class="message-box">
-                              <p><strong>Formulario:</strong> ${formName}</p>
-                              <p><strong>De:</strong> ${autor}</p>
-                              <p><strong>Mensaje:</strong> "${mensaje}"</p>
-                              <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit'
-            })}</p>
-                          </div>
-                          
-                          <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
-                          
-                          <div style="text-align: center; margin: 30px 0;">
-                              <a href="${responseUrl}" class="button">
-                                  📋 Ver detalles de la solicitud
-                              </a>
-                          </div>
-                          
-                          <div class="hr"></div>
-                          
-                          <p style="font-size: 14px; color: #6b7280;">
-                              Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
-                              <a href="${responseUrl}" style="color: #4f46e5; word-break: break-all;">${responseUrl}</a>
-                          </p>
-                          
-                          <div class="footer">
-                              <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
-                              <p>Una vez en la plataforma, puedes acceder a los mensajes desde la sección de chat.</p>
-                              <p>Por favor, no responder a este correo.</p>
-                              <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
-                          </div>
-                      </div>
-                  </div>
-              </body>
-              </html>
-            `;
-
-            console.log("📧 INICIANDO ENVÍO DE CORREO:");
-            console.log("- Destinatario:", userEmail);
-            console.log("- Asunto:", `📋 Nuevo mensaje - Plataforma RRHH - ${formName}`);
-            console.log("- HTML length:", emailHtml.length, "caracteres");
-
-            // USAR LA MISMA FUNCIÓN DE ENVÍO DE CORREOS QUE EN upload-corrected-files
-            const { sendEmail } = require("../utils/mail.helper");
-
-            try {
-              await sendEmail({
-                to: userEmail,
-                subject: `📋 Nuevo mensaje - Plataforma RRHH - ${formName}`,
-                html: emailHtml
-              });
-
-              console.log(`✅ Correo enviado exitosamente a: ${userEmail}`);
-              console.log(`✅ URL de respuesta: ${responseUrl}`);
-            } catch (sendError) {
-              console.error("❌ Error en sendEmail:", sendError);
-              throw sendError;
-            }
-          }
-        } else {
-          console.log("❌ NO HAY EMAIL PARA ENVIAR CORREO");
-          console.log("userEmail era:", userEmail);
+          console.log(`Correo enviado exitosamente a: ${userEmail}`);
+          console.log(`URL de respuesta: ${responseUrl}`);
         }
       } catch (emailError) {
-        console.error("❌ ERROR EN PROCESO DE CORREO:", emailError);
-        console.error("Stack trace:", emailError.stack);
+        console.error("Error enviando correo:", emailError);
         // Continuamos aunque falle el correo, no afecta la respuesta del mensaje
       }
-    } else {
-      console.log("📧 NO SE ENVIARÁ CORREO - Condición no cumplida");
     }
-
-    console.log("🔔 PROCESANDO NOTIFICACIONES:");
-    console.log("- Autor:", autor);
-    console.log("- respuesta.user?.nombre:", respuesta.user?.nombre);
-    console.log("- ¿Son iguales?:", respuesta?.user?.nombre === autor);
 
     // NOTIFICACIONES (lógica original mantenida)
     if (respuesta?.user?.nombre === autor) {
-      console.log("🔔 Enviando notificaciones a RRHH y Admin");
       const notifChat = {
         filtro: { cargo: "RRHH" },
         titulo: "Nuevo mensaje en formulario",
@@ -964,10 +857,6 @@ router.post("/chat", async (req, res) => {
       await addNotification(req.db, notifChat);
       await addNotification(req.db, { ...notifChat, filtro: { cargo: "admin" } });
     } else {
-      console.log("🔔 Enviando notificación al usuario cliente");
-      console.log("- User ID:", respuesta.user.uid);
-      console.log("- Autor mensaje:", autor);
-
       await addNotification(req.db, {
         userId: respuesta.user.uid,
         titulo: "Nuevo mensaje recibido",
@@ -977,20 +866,13 @@ router.post("/chat", async (req, res) => {
       });
     }
 
-    console.log("✅ FINALIZANDO ENDPOINT /chat - Enviando respuesta");
-
     res.json({
       message: "Mensaje enviado",
       data: nuevoMensaje,
       emailSent: sendToEmail === true && admin !== true
     });
   } catch (err) {
-    console.error("❌ ERROR GLOBAL en endpoint /chat:");
-    console.error("Error:", err);
-    console.error("Stack trace:", err.stack);
-    console.error("Body recibido:", req.body);
-    console.error("Headers:", req.headers);
-
+    console.error("Error en chat:", err);
     res.status(500).json({ error: "Error en chat" });
   }
 });
