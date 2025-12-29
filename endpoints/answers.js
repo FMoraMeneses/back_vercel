@@ -715,7 +715,7 @@ router.get("/:formId/chat/", async (req, res) => {
 //enviar mensaje
 router.post("/chat", async (req, res) => {
   try {
-    const { formId, autor, mensaje, admin, sendToEmail } = req.body;
+    const { formId, admin, sendToEmail } = req.body;
     if (!autor || !mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
 
     const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
@@ -788,8 +788,6 @@ router.post("/chat", async (req, res) => {
                         
                         <div class="message-box">
                             <p><strong>Formulario:</strong> ${formName}</p>
-                            <p><strong>De:</strong> ${autor}</p>
-                            <p><strong>Mensaje:</strong> "${mensaje}"</p>
                             <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
             day: '2-digit',
             month: '2-digit',
