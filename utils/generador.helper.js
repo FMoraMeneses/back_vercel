@@ -76,11 +76,11 @@ async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
 
         if (empresa) {
             return {
-                nombre: empresa.nombre,
-                rut: empresa.rut,
-                encargado: empresa.encargado || "",
-                direccion: empresa.direccion || "",
-                rut_encargado: empresa.rut_encargado || "",
+                nombre: decrypt(empresa.nombre),
+                rut: decrypt(empresa.rut),
+                encargado: decrypt(empresa.encargado) || "",
+                direccion: decrypt(empresa.direccion) || "",
+                rut_encargado: decrypt(empresa.rut_encargado) || "",
                 logo: empresa.logo
             };
         }
