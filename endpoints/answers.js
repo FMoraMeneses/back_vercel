@@ -759,36 +759,51 @@ router.post("/chat", async (req, res) => {
           const responseUrl = `${baseUrl}/?id=${respuestaId}`;
 
           const emailHtml = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                    .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-                    .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
-                    .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
-                    .button:hover { background-color: #4338ca; }
-                    .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
-                    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
-                    .title { color: #1f2937; font-size: 20px; font-weight: bold; margin-bottom: 20px; }
-                    .hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>Acciona Centro de Negocios</h1>
-                    </div>
-                    <div class="content">
-                        <h2 class="title">Tienes un nuevo mensaje en la plataforma de Recursos Humanos</h2>
-                        
-                        <p>Estimado/a <strong>${userName}</strong>,</p>
-                        
-                        <div class="message-box">
-                            <p><strong>Formulario:</strong> ${formName}</p>
-                            <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
+  <!DOCTYPE html>
+  <html>
+  <head>
+      <meta charset="UTF-8">
+      <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
+          .button { 
+              display: inline-block; 
+              background-color: #4f46e5; 
+              color: white !important;  /* ← ESTA ES LA LÍNEA CLAVE */
+              padding: 12px 24px; 
+              text-decoration: none; 
+              border-radius: 6px; 
+              font-weight: bold; 
+              margin-top: 20px; 
+              border: none;
+              cursor: pointer;
+              text-align: center;
+          }
+          .button:hover { 
+              background-color: #4338ca; 
+              color: white !important;
+          }
+          .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
+          .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+          .title { color: #1f2937; font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+          .hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
+      </style>
+  </head>
+  <body>
+      <div class="container">
+          <div class="header">
+              <h1>Acciona Centro de Negocios</h1>
+          </div>
+          <div class="content">
+              <h2 class="title">Tienes un nuevo mensaje en la plataforma de Recursos Humanos</h2>
+              
+              <p>Estimado/a <strong>${userName}</strong>,</p>
+              
+              <div class="message-box">
+                  <p><strong>Formulario:</strong> ${formName}</p>
+                  <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
             day: '2-digit',
             month: '2-digit',
             year: 'numeric',
@@ -796,34 +811,34 @@ router.post("/chat", async (req, res) => {
             minute: '2-digit',
             second: '2-digit'
           })}</p>
-                        </div>
-                        
-                        <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
-                        
-                        <div style="text-align: center; margin: 30px 0; color: #ffffffff;">
-                            <a href="${responseUrl}" class="button">
-                                Ver detalles de la solicitud
-                            </a>
-                        </div>
-                        
-                        <div class="hr"></div>
-                        
-                        <p style="font-size: 14px; color: #6b7280;">
-                            Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
-                            <a href="${responseUrl}" style="color: #4f46e5; word-break: break-all;">${responseUrl}</a>
-                        </p>
-                        
-                        <div class="footer">
-                            <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
-                            <p>Una vez en la plataforma, puedes acceder a los mensajes desde la sección de chat.</p>
-                            <p>Por favor, no responder a este correo.</p>
-                            <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
-                        </div>
-                    </div>
-                </div>
-            </body>
-            </html>
-          `;
+              </div>
+              
+              <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                  <a href="${responseUrl}" class="button" style="color: white !important; text-decoration: none;">
+                      Ver detalles de la solicitud
+                  </a>
+              </div>
+              
+              <div class="hr"></div>
+              
+              <p style="font-size: 14px; color: #6b7280;">
+                  Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+                  <a href="${responseUrl}" style="color: #4f46e5; word-break: break-all;">${responseUrl}</a>
+              </p>
+              
+              <div class="footer">
+                  <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
+                  <p>Una vez en la plataforma, puedes acceder a los mensajes desde la sección de chat.</p>
+                  <p>Por favor, no responder a este correo.</p>
+                  <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
+              </div>
+          </div>
+      </div>
+  </body>
+  </html>
+`;
 
           // USAR LA MISMA FUNCIÓN DE ENVÍO DE CORREOS QUE EN upload-corrected-files
           const { sendEmail } = require("../utils/mail.helper");
