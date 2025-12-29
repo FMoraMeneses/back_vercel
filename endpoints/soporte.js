@@ -251,7 +251,7 @@ router.post("/", async (req, res) => {
 
     // El usuario que viene del frontend ya debería estar descifrado en su sesión, 
     // pero para la lógica interna usamos sus datos.
-    const usuario = user?.nombre;
+    const usuario = user;
     const empresa = user?.empresa;
     const userId = user?.uid;
     const token = user?.token;
@@ -302,7 +302,6 @@ router.post("/", async (req, res) => {
         timeStyle: 'medium'
       });
       const questions = form?.questions || [];
-      usuario = user;
       const contenido = generarContenidoCorreoRespaldo(
         formTitle,
         usuario,
