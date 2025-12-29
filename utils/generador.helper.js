@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const docx = require("docx");
 const { Document, Packer, Paragraph, TextRun, AlignmentType, Table, TableRow, TableCell, WidthType, ImageRun, BorderStyle } = docx;
-const { createBlindIndex, verifyPassword, decrypt, encrypt } = require("./seguridad.helper");
+const { createBlindIndex, verifyPassword, decrypt } = require("./seguridad.helper");
 
 // ========== FUNCIONES DE UTILIDAD (MANTENIDAS) ==========
 
@@ -62,26 +62,25 @@ const ORDINALES = [
 
 async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
     try {
-        console.log("=== BUSCANDO EMPRESA EN BD (CIFRADA) ===");
+        console.log("=== BUSCANDO EMPRESA EN BD ===");
         console.log("Nombre empresa buscado:", nombreEmpresa);
 
         if (!db || typeof db.collection !== 'function') {
             throw new Error("Base de datos no disponible");
         }
 
-        // IMPORTANTE: Las empresas están cifradas, buscar por índice ciego
-        const empresaIndex = createBlindIndex(nombreEmpresa);
+        // Buscar por índice ciego ya que las empresas están cifradas
+        const nombreIndex = createBlindIndex(nombreEmpresa);
         
-        console.log("Buscando por blind index:", empresaIndex);
+        console.log("Buscando empresa por índice ciego:", nombreIndex);
         
         const empresa = await db.collection('empresas').findOne({
-            nombre_index: empresaIndex
+            nombre_index: nombreIndex
         });
 
         console.log("Empresa encontrada en BD:", empresa ? "SÍ" : "NO");
 
         if (empresa) {
-            // Descifrar todos los campos cifrados
             return {
                 nombre: decrypt(empresa.nombre),
                 rut: decrypt(empresa.rut),
@@ -95,36 +94,15 @@ async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
             };
         }
 
-        // Búsqueda alternativa por RUT (también cifrado)
-        const rutIndex = createBlindIndex(nombreEmpresa);
-        const empresaPorRut = await db.collection('empresas').findOne({
-            rut_index: rutIndex
-        });
-
-        if (empresaPorRut) {
-            console.log("Empresa encontrada por RUT");
-            return {
-                nombre: decrypt(empresaPorRut.nombre),
-                rut: decrypt(empresaPorRut.rut),
-                encargado: decrypt(empresaPorRut.encargado) || "",
-                direccion: decrypt(empresaPorRut.direccion) || "",
-                rut_encargado: decrypt(empresaPorRut.rut_encargado) || "",
-                logo: empresaPorRut.logo ? {
-                    ...empresaPorRut.logo,
-                    fileData: empresaPorRut.logo.fileData ? decrypt(empresaPorRut.logo.fileData) : null
-                } : null
-            };
-        }
-
-        // Búsqueda exhaustiva descifrando cada empresa (último recurso)
-        console.log("Realizando búsqueda exhaustiva...");
+        console.log("No se encontró empresa en BD por índice ciego, intentando búsqueda exhaustiva...");
+        
         const todasEmpresas = await db.collection('empresas').find({}).toArray();
         
         for (const emp of todasEmpresas) {
             try {
                 const nombreDescifrado = decrypt(emp.nombre);
                 if (nombreDescifrado.toLowerCase().includes(nombreEmpresa.toLowerCase())) {
-                    console.log("Empresa encontrada en búsqueda exhaustiva");
+                    console.log("Empresa encontrada en búsqueda exhaustiva:", nombreDescifrado);
                     return {
                         nombre: nombreDescifrado,
                         rut: decrypt(emp.rut),
@@ -138,12 +116,12 @@ async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
                     };
                 }
             } catch (decryptError) {
-                console.error("Error descifrando empresa:", decryptError);
+                console.error("Error descifrando empresa durante búsqueda exhaustiva:", decryptError);
                 continue;
             }
         }
 
-        console.log("No se encontró empresa en BD");
+        console.log("No se encontró empresa en BD después de búsqueda exhaustiva");
         return null;
 
     } catch (error) {
@@ -158,17 +136,10 @@ function crearLogoImagen(logoData) {
     }
 
     try {
-        // Si el fileData es un string (base64 descifrado), convertirlo a Buffer
         let imageBuffer;
+        
         if (typeof logoData.fileData === 'string') {
-            // Verificar si ya es base64
-            if (logoData.fileData.includes('base64,')) {
-                const base64Data = logoData.fileData.split('base64,')[1];
-                imageBuffer = Buffer.from(base64Data, 'base64');
-            } else {
-                // Asumir que ya es base64 puro
-                imageBuffer = Buffer.from(logoData.fileData, 'base64');
-            }
+            imageBuffer = Buffer.from(logoData.fileData, 'base64');
         } else if (Buffer.isBuffer(logoData.fileData)) {
             imageBuffer = logoData.fileData;
         } else {
@@ -254,25 +225,43 @@ async function extraerVariablesDeRespuestas(responses, userData, db) {
         try {
             const empresaInfo = await obtenerEmpresaDesdeBD(userData.empresa, db);
             if (empresaInfo) {
-                if (!variables[normalizarNombreVariable('Empresa')]) {
-                    variables[normalizarNombreVariable('Empresa')] = empresaInfo.nombre;
-                }
-                if (!variables[normalizarNombreVariable('Nombre empresa')]) {
-                    variables[normalizarNombreVariable('Nombre empresa')] = empresaInfo.nombre;
-                }
-                variables[normalizarNombreVariable('Rut empresa')] = empresaInfo.rut || '';
-                variables[normalizarNombreVariable('Encargado empresa')] = empresaInfo.encargado || '';
-                variables[normalizarNombreVariable('Rut encargado empresa')] = empresaInfo.rut_encargado || '';
-                variables[normalizarNombreVariable('Direccion empresa')] = empresaInfo.direccion || '';
+                const nombreEmpresa = empresaInfo.nombre || '';
+                const rutEmpresa = empresaInfo.rut || '';
+                const encargadoEmpresa = empresaInfo.encargado || '';
+                const rutEncargado = empresaInfo.rut_encargado || '';
+                const direccionEmpresa = empresaInfo.direccion || '';
+                
+                variables['EMPRESA'] = nombreEmpresa;
+                variables['NOMBRE_EMPRESA'] = nombreEmpresa;
+                variables['NOMBRE_DE_LA_EMPRESA'] = nombreEmpresa;
+                variables['EMPRESA_NOMBRE'] = nombreEmpresa;
+                
+                variables['RUT_EMPRESA'] = rutEmpresa;
+                variables['RUT_DE_LA_EMPRESA'] = rutEmpresa;
+                variables['EMPRESA_RUT'] = rutEmpresa;
+                variables['RUT'] = rutEmpresa;
+                
+                variables['ENCARGADO_EMPRESA'] = encargadoEmpresa;
+                variables['ENCARGADO_DE_LA_EMPRESA'] = encargadoEmpresa;
+                variables['REPRESENTANTE_LEGAL'] = encargadoEmpresa;
+                variables['REPRESENTANTE'] = encargadoEmpresa;
+                variables['ENCARGADO'] = encargadoEmpresa;
+                
+                variables['RUT_ENCARGADO_EMPRESA'] = rutEncargado;
+                variables['RUT_ENCARGADO'] = rutEncargado;
+                variables['RUT_DEL_ENCARGADO'] = rutEncargado;
+                variables['RUT_REPRESENTANTE'] = rutEncargado;
+                
+                variables['DIRECCION_EMPRESA'] = direccionEmpresa;
+                variables['DIRECCION'] = direccionEmpresa;
+                variables['DIRECCION_DE_LA_EMPRESA'] = direccionEmpresa;
 
-                console.log("Información empresa obtenida:", {
-                    nombre: empresaInfo.nombre,
-                    rut: empresaInfo.rut,
-                    encargado: empresaInfo.encargado,
-                    direccion: empresaInfo.direccion,
-                    rut_encargado: empresaInfo.rut_encargado,
-                    tieneLogo: !!empresaInfo.logo
-                });
+                console.log("=== INFORMACIÓN EMPRESA AGREGADA ===");
+                console.log("NOMBRE_EMPRESA:", nombreEmpresa);
+                console.log("RUT_EMPRESA:", rutEmpresa);
+                console.log("ENCARGADO_EMPRESA:", encargadoEmpresa);
+                console.log("RUT_ENCARGADO_EMPRESA:", rutEncargado);
+                console.log("DIRECCION_EMPRESA:", direccionEmpresa);
             }
         } catch (error) {
             console.error("Error obteniendo información de empresa:", error);
@@ -282,16 +271,25 @@ async function extraerVariablesDeRespuestas(responses, userData, db) {
     variables['FECHA_ACTUAL'] = formatearFechaEspanol(new Date().toISOString().split("T")[0]);
     variables['HORA_ACTUAL'] = new Date().toLocaleTimeString('es-CL', { timeZone: 'America/Santiago' });
 
-    console.log("=== VARIABLES EXTRAÍDAS ===");
-    console.log("Total variables:", Object.keys(variables).length);
-    console.log("Variables disponibles:", Object.keys(variables).sort());
-    console.log("VALORES CLAVE:");
+    const nombreTrabajador = variables['NOMBRE_DEL_TRABAJADOR'] || 
+                            responses['Nombre del trabajador'] || 
+                            '';
+    
+    variables['NOMBRE_DEL_TRABAJADOR'] = nombreTrabajador;
+    variables['TRABAJADOR'] = nombreTrabajador;
+    variables['NOMBRE_TRABAJADOR'] = nombreTrabajador;
+
+    console.log("=== RESUMEN VARIABLES CLAVE ===");
     console.log("NOMBRE_DEL_TRABAJADOR:", variables['NOMBRE_DEL_TRABAJADOR']);
-    console.log("EMPRESA:", variables[normalizarNombreVariable('Empresa')]);
-    console.log("ENCARGADO_EMPRESA:", variables[normalizarNombreVariable('Encargado empresa')]);
-    console.log("DIRECCION_EMPRESA:", variables[normalizarNombreVariable('Direccion empresa')]);
+    console.log("NOMBRE_EMPRESA:", variables['NOMBRE_EMPRESA']);
+    console.log("ENCARGADO_EMPRESA:", variables['ENCARGADO_EMPRESA']);
+    console.log("RUT_ENCARGADO_EMPRESA:", variables['RUT_ENCARGADO_EMPRESA']);
+    console.log("RUT_EMPRESA:", variables['RUT_EMPRESA']);
     console.log("FECHA_ACTUAL:", variables['FECHA_ACTUAL']);
-    console.log("HORA_ACTUAL:", variables['HORA_ACTUAL']);
+    
+    console.log("=== TOTAL VARIABLES DISPONIBLES ===");
+    console.log(Object.keys(variables).sort().join(', '));
+
     return variables;
 }
 
@@ -370,10 +368,12 @@ function evaluarCondicional(conditionalVar, variables) {
 
     console.log(`SIMPLE: ${varName} no tiene valor - NO INCLUIR`);
     return false;
-}function reemplazarVariablesEnContenido(contenido, variables) {
-    console.log("=== REEMPLAZANDO VARIABLES EN CONTENIDO ===");
+}
 
-    let contenidoProcesado = contenido;
+function reemplazarVariablesEnContenido(contenido, variables) {
+    console.log("=== REEMPLAZANDO VARIABLES EN CONTENIDO ===");
+    console.log("Contenido original (primeros 200 caracteres):", contenido.substring(0, 200) + "...");
+
     const regex = /{{([^}]+)}}/g;
     let match;
 
@@ -382,7 +382,8 @@ function evaluarCondicional(conditionalVar, variables) {
 
     while ((match = regex.exec(contenido)) !== null) {
         const variableCompleta = match[0];
-        const nombreVariable = match[1].trim();
+        const nombreVariableOriginal = match[1].trim();
+        const nombreVariableNormalizado = normalizarNombreVariable(nombreVariableOriginal);
         const matchIndex = match.index;
 
         if (matchIndex > lastIndex) {
@@ -390,20 +391,44 @@ function evaluarCondicional(conditionalVar, variables) {
             textRuns.push(new TextRun(textoNormal));
         }
 
-        let valor = variables[nombreVariable] || `[${nombreVariable} NO ENCONTRADA]`;
-
-        if (esCampoDeFecha(nombreVariable) && valor && !valor.includes('NO ENCONTRADA')) {
-            try {
-                const fechaFormateada = formatearFechaEspanol(valor);
-                console.log(`Formateando fecha: ${valor} → ${fechaFormateada}`);
-                valor = fechaFormateada;
-            } catch (error) {
-                console.error(`Error formateando fecha ${nombreVariable}:`, error);
+        let valor = 'VARIABLE NO ENCONTRADA';
+        
+        if (variables[nombreVariableNormalizado]) {
+            valor = variables[nombreVariableNormalizado];
+        } else {
+            const variantes = [
+                nombreVariableNormalizado,
+                nombreVariableNormalizado.replace(/_/g, ''),
+                nombreVariableNormalizado.replace(/DE_/g, '').replace(/DEL_/g, ''),
+                nombreVariableNormalizado.replace(/EMPRESA_/g, '').replace(/_EMPRESA/g, ''),
+                nombreVariableNormalizado.replace(/ENCARGADO_/g, '').replace(/_ENCARGADO/g, '')
+            ];
+            
+            for (const variante of variantes) {
+                if (variables[variante]) {
+                    valor = variables[variante];
+                    console.log(`Variable encontrada como variante: ${nombreVariableOriginal} → ${variante}`);
+                    break;
+                }
             }
         }
 
-        console.log(`Reemplazando: ${variableCompleta} ->`, valor);
-        textRuns.push(new TextRun({ text: valor, bold: true }));
+        if (esCampoDeFecha(nombreVariableNormalizado) && valor && !valor.includes('NO ENCONTRADA') && !valor.includes('VARIABLE NO ENCONTRADA')) {
+            try {
+                const fechaFormateada = formatearFechaEspanol(valor);
+                console.log(`Formateando fecha: ${nombreVariableNormalizado} = ${valor} → ${fechaFormateada}`);
+                valor = fechaFormateada;
+            } catch (error) {
+                console.error(`Error formateando fecha ${nombreVariableNormalizado}:`, error);
+            }
+        }
+
+        console.log(`Reemplazando: {{${nombreVariableOriginal}}} (normalizada: ${nombreVariableNormalizado}) ->`, valor);
+        textRuns.push(new TextRun({ 
+            text: valor, 
+            bold: true,
+            color: valor.includes('NO ENCONTRADA') ? "FF0000" : "000000"
+        }));
 
         lastIndex = matchIndex + variableCompleta.length;
     }
@@ -416,6 +441,7 @@ function evaluarCondicional(conditionalVar, variables) {
     console.log("Contenido procesado (TextRuns):", textRuns.length, "elementos");
     return textRuns;
 }
+
 function procesarTextoFirma(textoFirma, variables) {
     if (!textoFirma) return '';
 
@@ -623,7 +649,6 @@ async function generarDocumentoDesdePlantilla(responses, responseId, db, plantil
 
         const fileName = `${limpiarFileName(nombreFormulario)}_${limpiarFileName(trabajador)}`;
 
-        // VERIFICAR Y SOBREESCRIBIR DOCUMENTO EXISTENTE
         const existingDoc = await db.collection('docxs').findOne({
             responseId: responseId
         });
@@ -676,7 +701,6 @@ async function generarDocumentoDesdePlantilla(responses, responseId, db, plantil
 }
 
 function limpiarFileName(texto) {
-    // Asegurarse de que texto sea siempre un string
     if (typeof texto !== 'string') {
         texto = String(texto || 'documento');
     }
@@ -696,67 +720,12 @@ function limpiarFileName(texto) {
         .replace(/Ú/g, 'U')
         .replace(/ü/g, 'u')
         .replace(/Ü/g, 'U')
-        // Eliminar cualquier otro diacrítico
         .replace(/[\u0300-\u036f]/g, '')
-        // Eliminar caracteres especiales restantes
         .replace(/[^a-zA-Z0-9\s._-]/g, '')
-        // Reemplazar espacios múltiples por un solo guión bajo
         .replace(/\s+/g, '_')
-        // Limitar longitud
         .substring(0, 100)
-        // Eliminar guiones bajos al inicio/final
         .replace(/^_+|_+$/g, '')
         .toUpperCase();
-}
-
-function reemplazarVariablesEnContenido(contenido, variables) {
-    console.log("=== REEMPLAZANDO VARIABLES EN CONTENIDO ===");
-
-    const regex = /{{([^}]+)}}/g;
-    let match;
-
-    const textRuns = [];
-    let lastIndex = 0;
-
-    while ((match = regex.exec(contenido)) !== null) {
-        const variableCompleta = match[0];
-        const nombreVariable = match[1].trim();
-        const matchIndex = match.index;
-
-        // Texto normal antes de la variable
-        if (matchIndex > lastIndex) {
-            const textoNormal = contenido.substring(lastIndex, matchIndex);
-            textRuns.push(new TextRun(textoNormal));
-        }
-
-        // Variable en negrita
-        let valor = variables[nombreVariable] || `[${nombreVariable} NO ENCONTRADA]`;
-
-        // Detectar y formatear fechas automáticamente
-        if (esCampoDeFecha(nombreVariable) && valor && !valor.includes('NO ENCONTRADA')) {
-            try {
-                const fechaFormateada = formatearFechaEspanol(valor);
-                console.log(`Formateando fecha: ${valor} → ${fechaFormateada}`);
-                valor = fechaFormateada;
-            } catch (error) {
-                console.error(`Error formateando fecha ${nombreVariable}:`, error);
-            }
-        }
-
-        console.log(`Reemplazando: ${variableCompleta} ->`, valor);
-        textRuns.push(new TextRun({ text: valor, bold: true }));
-
-        lastIndex = matchIndex + variableCompleta.length;
-    }
-
-    // Texto normal después de la última variable
-    if (lastIndex < contenido.length) {
-        const textoFinal = contenido.substring(lastIndex);
-        textRuns.push(new TextRun(textoFinal));
-    }
-
-    console.log("Contenido procesado (TextRuns):", textRuns.length, "elementos");
-    return textRuns;
 }
 
 async function generarDocumentoTxt(responses, responseId, db, formTitle) {
@@ -806,7 +775,6 @@ async function generarDocumentoTxt(responses, responseId, db, formTitle) {
         const nombreFormulario = formTitle || 'FORMULARIO';
         const fileName = `${limpiarFileName(nombreFormulario)}_${limpiarFileName(trabajador)}`;
 
-        // VERIFICAR Y SOBREESCRIBIR DOCUMENTO EXISTENTE (TXT)
         const existingDoc = await db.collection('docxs').findOne({
             responseId: responseId
         });
