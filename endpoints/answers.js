@@ -142,7 +142,7 @@ router.post("/", async (req, res) => {
       descripcion: adjuntos.length > 0 ? `Incluye ${adjuntos.length} archivo(s)` : "Revisar en panel.",
       prioridad: 2,
       color: "#bb8900ff",
-      icono: "form",
+      icono: "Edit",
       actionUrl: `/RespuestasForms?id=${result.insertedId}`,
     };
     await addNotification(req.db, { filtro: { cargo: "RRHH" }, ...notifData });
@@ -154,7 +154,7 @@ router.post("/", async (req, res) => {
       titulo: "Formulario completado",
       descripcion: `El formulario ${formTitle} fue completado correctamente.`,
       prioridad: 2,
-      icono: "CheckCircle",
+      icono: "Edit",
       color: "#006e13ff",
       actionUrl: `/?id=${result.insertedId}`,
     });
@@ -755,7 +755,7 @@ router.post("/chat", async (req, res) => {
 
         // ENVIAR CORREO SI TENEMOS EMAIL
         if (userEmail) {
-          const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
+          const baseUrl = process.env.PORTAL_URL || "https://infodesa.vercel.app";
           const responseUrl = `${baseUrl}/preview?type=messages&id=${respuestaId}`;
 
           const emailHtml = `
@@ -864,7 +864,7 @@ router.post("/chat", async (req, res) => {
         filtro: { cargo: "RRHH" },
         titulo: "Nuevo mensaje en formulario",
         descripcion: `${autor} ha enviado un mensaje.`,
-        icono: "Edit", color: "#45577eff",
+        icono: "MessageCircle", color: "#45577eff",
         actionUrl: `/RespuestasForms?id=${respuesta._id}`,
       };
       await addNotification(req.db, notifChat);

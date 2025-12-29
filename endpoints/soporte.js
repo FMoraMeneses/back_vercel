@@ -356,7 +356,7 @@ router.post("/", async (req, res) => {
       descripcion: adjuntos.length > 0 ? `Incluye ${adjuntos.length} archivo(s)` : "Revisar en panel.",
       prioridad: 2,
       color: "#bb8900ff",
-      icono: "form",
+       icono: "CheckCircle",
       actionUrl: `/Tickets?id=${result.insertedId}`,
     };
     await addNotification(req.db, { filtro: { rol: "Admin" }, ...notifData });
