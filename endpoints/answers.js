@@ -1266,7 +1266,7 @@ router.post("/upload-corrected-files", async (req, res) => {
         try {
           const { sendEmail } = require("../utils/mail.helper");
           const portalUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
-          const responseUrl = `${baseUrl}/?id=${responseId}`;
+          const responseUrl = `${portalUrl}/?id=${responseId}`;
 
 
           const emailHtml = `
