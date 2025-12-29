@@ -756,7 +756,7 @@ router.post("/chat", async (req, res) => {
         // ENVIAR CORREO SI TENEMOS EMAIL
         if (userEmail) {
           const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
-          const responseUrl = `${baseUrl}/?id=${respuestaId}`;
+          const responseUrl = `${baseUrl}/preview?type=messages&id=${respuestaId}`;
 
           const emailHtml = `
   <!DOCTYPE html>
@@ -1277,7 +1277,7 @@ router.post("/upload-corrected-files", async (req, res) => {
         try {
           const { sendEmail } = require("../utils/mail.helper");
           const portalUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
-          const responseUrl = `${portalUrl}/?id=${responseId}`;
+          const responseUrl = `${portalUrl}/preview?type=details&id=${responseId}`;
 
 
           const emailHtml = `
@@ -1313,12 +1313,12 @@ router.post("/upload-corrected-files", async (req, res) => {
                         <p>Se han cargado documentos aprobados correspondientes a tu respuesta. 
                         Ya puedes revisarlos y proceder con la firma digital.</p>
                         
-                        <a href="${portalUrl}${responseId}" class="button">
+                        <a href="${responseUrl}" class="button">
                             🔍 Ver documentos en el portal
                         </a>
                         
                         <p><small>O copia este enlace en tu navegador:<br>
-                        ${portalUrl}${responseId}</small></p>
+                        ${responseUrl}</small></p>
                         
                         <div class="footer">
                             <p>Este es un mensaje automático. Si tienes dudas, contacta a tu ejecutivo.</p>
