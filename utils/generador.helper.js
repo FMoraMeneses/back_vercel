@@ -95,10 +95,10 @@ async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
                 if (empresaPorPalabra) {
                     console.log("Empresa encontrada por palabra clave:", empresaPorPalabra);
                     return {
-                        nombre: empresaPorPalabra.nombre,
-                        rut: empresaPorPalabra.rut,
-                        encargado: empresaPorPalabra.encargado || "",
-                        rut_encargado: empresaPorPalabra.rut_encargado || "",
+                        nombre: decrypt(empresaPorPalabra.nombre),
+                        rut: decrypt(empresaPorPalabra.rut),
+                        encargado: decrypt(empresaPorPalabra.encargado) || "",
+                        rut_encargado: decrypt(empresaPorPalabra.rut_encargado) || "",
                         logo: empresaPorPalabra.logo
                     };
                 }
