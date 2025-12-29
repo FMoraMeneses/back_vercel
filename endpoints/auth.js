@@ -102,7 +102,7 @@ const crearNuevoToken = async (db, user, email) => {
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + TOKEN_EXPIRATION);
   const now = getAhoraChile();
-  
+
   await db.collection("tokens").insertOne({
     token: token,
     email: encrypt(email.toLowerCase().trim()),
@@ -113,7 +113,7 @@ const crearNuevoToken = async (db, user, email) => {
     expiresAt: expiresAt,
     active: encrypt("true")
   });
-  
+
   return { token, expiresAt };
 };
 
@@ -121,17 +121,17 @@ const crearNuevoToken = async (db, user, email) => {
 const desactivarTokenPorEmail = async (db, email) => {
   const emailIndex = createBlindIndex(email.toLowerCase().trim());
   const ahora = new Date();
-  
+
   await db.collection("tokens").updateOne(
-    { 
+    {
       email_index: emailIndex,
       active: encrypt("true")
     },
-    { 
-      $set: { 
+    {
+      $set: {
         active: encrypt("false"),
-        revokedAt: ahora 
-      } 
+        revokedAt: ahora
+      }
     }
   );
 };
@@ -774,58 +774,153 @@ router.post("/validate", async (req, res) => {
     return res.status(401).json({ valid: false, message: "Acceso inválido" });
 
   try {
-    // Buscar token (el campo 'token' no está cifrado)
-    const tokenRecord = await req.db.collection("tokens").findOne({ 
-      token, 
-      active: encrypt(true) // 'active' está cifrado como string
+    console.log("Validando token:", {
+      token: token.substring(0, 10) + "...",
+      email,
+      cargo
     });
-    
-    if (!tokenRecord)
-      return res.status(401).json({ valid: false, message: "Token inválido o inexistente" });
 
-    const now = new Date();
-    const expiresAt = new Date(tokenRecord.expiresAt);
-    const createdAt = new Date(tokenRecord.createdAt);
+    // Buscar token (el campo 'token' no está cifrado)
+    const tokenRecord = await req.db.collection("tokens").findOne({
+      token
+    });
 
-    const expired = expiresAt < now;
-
-    const isSameDay =
-      createdAt.getFullYear() === now.getFullYear() &&
-      createdAt.getMonth() === now.getMonth() &&
-      createdAt.getDate() === now.getDate();
-
-    if (expired) {
-      // Desactivar token (cifrar como "false")
-      await req.db.collection("tokens").updateOne(
-        { token },
-        { $set: { active: encrypt(false), revokedAt: new Date() } }
-      );
+    if (!tokenRecord) {
+      console.log("Token no encontrado en BD");
       return res.status(401).json({
         valid: false,
-        message: expired && "Token expirado. Inicia sesión nuevamente."
+        message: "Token inválido o inexistente"
       });
     }
 
-    // Descifrar email del token para comparar
-    const tokenEmailDescifrado = decrypt(tokenRecord.email);
-    if (tokenEmailDescifrado !== email.toLowerCase().trim())
-      return res.status(401).json({ valid: false, message: "Token no corresponde al usuario" });
-
-    // Descifrar rol del token para comparar
-    const tokenRolDescifrado = decrypt(tokenRecord.rol);
-    if (tokenRolDescifrado !== cargo)
-      return res.status(401).json({ valid: false, message: "Cargo no corresponde al usuario" });
-
-    return res.json({ 
-      valid: true, 
-      user: { 
-        email: email.toLowerCase().trim(), 
-        cargo 
-      } 
+    console.log("Token encontrado en BD:", {
+      _id: tokenRecord._id,
+      email: tokenRecord.email?.substring(0, 20) + "...",
+      hasEmailIndex: !!tokenRecord.email_index,
+      active: tokenRecord.active?.substring(0, 20) + "...",
+      revokedAt: tokenRecord.revokedAt,
+      expiresAt: tokenRecord.expiresAt
     });
+
+    // 1. Verificar si está activo (descifrar campo 'active')
+    let activeDescifrado = "false"; // Por defecto
+
+    try {
+      if (tokenRecord.active && tokenRecord.active.includes(':')) {
+        activeDescifrado = decrypt(tokenRecord.active);
+        console.log("Active descifrado:", activeDescifrado);
+      }
+    } catch (error) {
+      console.error("Error descifrando active:", error);
+      return res.status(401).json({
+        valid: false,
+        message: "Error en formato del token"
+      });
+    }
+
+    if (activeDescifrado !== "true") {
+      console.log("Token NO está activo. Active descifrado:", activeDescifrado);
+      return res.status(401).json({
+        valid: false,
+        message: "Token inactivo o revocado"
+      });
+    }
+
+    console.log("Token está activo ✓");
+
+    // 2. Verificar expiración
+    const now = new Date();
+    const expiresAt = new Date(tokenRecord.expiresAt);
+
+    if (expiresAt < now) {
+      console.log("Token EXPIRADO. ExpiresAt:", expiresAt, "Now:", now);
+
+      // Desactivar token (cifrar como "false")
+      await req.db.collection("tokens").updateOne(
+        { token },
+        {
+          $set: {
+            active: encrypt("false"),
+            revokedAt: new Date()
+          }
+        }
+      );
+
+      return res.status(401).json({
+        valid: false,
+        message: "Token expirado. Inicia sesión nuevamente."
+      });
+    }
+
+    console.log("Token NO expirado ✓");
+
+    // 3. Verificar email del token
+    let tokenEmailDescifrado = "";
+    try {
+      if (tokenRecord.email && tokenRecord.email.includes(':')) {
+        tokenEmailDescifrado = decrypt(tokenRecord.email);
+        console.log("Email descifrado del token:", tokenEmailDescifrado);
+      }
+    } catch (error) {
+      console.error("Error descifrando email del token:", error);
+      return res.status(401).json({
+        valid: false,
+        message: "Error en formato del token"
+      });
+    }
+
+    const emailNormalizado = email.toLowerCase().trim();
+    if (tokenEmailDescifrado !== emailNormalizado) {
+      console.log("Email NO coincide. Token email:", tokenEmailDescifrado, "Request email:", emailNormalizado);
+      return res.status(401).json({
+        valid: false,
+        message: "Token no corresponde al usuario"
+      });
+    }
+
+    console.log("Email coincide ✓");
+
+    // 4. Verificar rol del token
+    let tokenRolDescifrado = "";
+    try {
+      if (tokenRecord.rol && tokenRecord.rol.includes(':')) {
+        tokenRolDescifrado = decrypt(tokenRecord.rol);
+        console.log("Rol descifrado del token:", tokenRolDescifrado);
+      }
+    } catch (error) {
+      console.error("Error descifrando rol del token:", error);
+      return res.status(401).json({
+        valid: false,
+        message: "Error en formato del token"
+      });
+    }
+
+    if (tokenRolDescifrado !== cargo) {
+      console.log("Rol NO coincide. Token rol:", tokenRolDescifrado, "Request cargo:", cargo);
+      return res.status(401).json({
+        valid: false,
+        message: "Cargo no corresponde al usuario"
+      });
+    }
+
+    console.log("Rol coincide ✓");
+    console.log("Token VALIDADO EXITOSAMENTE");
+
+    return res.json({
+      valid: true,
+      user: {
+        email: emailNormalizado,
+        cargo
+      }
+    });
+
   } catch (err) {
     console.error("Error validando token:", err);
-    res.status(500).json({ valid: false, message: "Error interno al validar token" });
+    res.status(500).json({
+      valid: false,
+      message: "Error interno al validar token",
+      error: err.message
+    });
   }
 });
 
@@ -836,10 +931,12 @@ router.post("/logout", async (req, res) => {
   try {
     await req.db.collection("tokens").updateOne(
       { token },
-      { $set: { 
-        active: encrypt("false"), // Cifrar como string "false"
-        revokedAt: new Date() 
-      } }
+      {
+        $set: {
+          active: encrypt("false"), // Cifrar como string "false"
+          revokedAt: new Date()
+        }
+      }
     );
     res.json({ success: true, message: "Sesión cerrada" });
   } catch (err) {
@@ -1006,14 +1103,16 @@ router.put("/users/:id", async (req, res) => {
     // Desactivar token usando email_index (compatible con cifrado)
     const emailIndex = createBlindIndex(userEmail);
     await req.db.collection("tokens").updateOne(
-      { 
-        email_index: emailIndex, 
-        active: encrypt("true") 
+      {
+        email_index: emailIndex,
+        active: encrypt("true")
       },
-      { $set: { 
-        active: encrypt("false"), 
-        revokedAt: ahora 
-      } }
+      {
+        $set: {
+          active: encrypt("false"),
+          revokedAt: ahora
+        }
+      }
     );
 
     res.json({
