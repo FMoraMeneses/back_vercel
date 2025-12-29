@@ -1223,18 +1223,44 @@ router.get("/empresas/todas", async (req, res) => {
   try {
     const empresas = await req.db.collection("empresas").find().toArray();
 
-    const empresasDescifradas = empresas.map(emp => ({
-      ...emp,
-      nombre: decrypt(emp.nombre),
-      rut: decrypt(emp.rut),
-      direccion: decrypt(emp.direccion),
-      encargado: decrypt(emp.encargado),
-      rut_encargado: decrypt(emp.rut_encargado),
-      logo: emp.logo ? { ...emp.logo, fileData: decrypt(emp.logo.fileData) } : null
-    }));
+    const empresasDescifradas = empresas.map(emp => {
+      const empresaDescifrada = {
+        _id: emp._id,
+        nombre: decrypt(emp.nombre),
+        rut: decrypt(emp.rut),
+        direccion: decrypt(emp.direccion),
+        encargado: decrypt(emp.encargado),
+        rut_encargado: decrypt(emp.rut_encargado),
+        createdAt: emp.createdAt,
+        updatedAt: emp.updatedAt,
+        logo: null
+      };
+
+      // Si tiene logo, descifrarlo
+      if (emp.logo && emp.logo.fileData) {
+        try {
+          empresaDescifrada.logo = {
+            fileName: emp.logo.fileName,
+            fileData: decrypt(emp.logo.fileData), // ¡DESCIFRAR el fileData!
+            fileSize: emp.logo.fileSize,
+            mimeType: emp.logo.mimeType,
+            uploadedAt: emp.logo.uploadedAt
+          };
+        } catch (error) {
+          console.error('Error descifrando logo para empresa', emp._id, error);
+          empresaDescifrada.logo = {
+            fileName: emp.logo.fileName,
+            error: "Error al procesar logo"
+          };
+        }
+      }
+
+      return empresaDescifrada;
+    });
 
     res.json(empresasDescifradas);
   } catch (err) {
+    console.error("Error al obtener empresas:", err);
     res.status(500).json({ error: "Error al obtener empresas" });
   }
 });
