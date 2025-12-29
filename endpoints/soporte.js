@@ -195,8 +195,23 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
     return undefined;
   };
 
+  // Descifrar datos del usuario si están cifrados
+  let nombreUsuarioDescifrado = usuario.nombre;
+  let empresaDescifrada = usuario.empresa;
+  
+  try {
+    if (usuario.nombre && usuario.nombre.includes(':')) {
+      nombreUsuarioDescifrado = decrypt(usuario.nombre);
+    }
+    if (usuario.empresa && usuario.empresa.includes(':')) {
+      empresaDescifrada = decrypt(usuario.empresa);
+    }
+  } catch (error) {
+    console.error('Error descifrando datos del usuario para correo:', error);
+  }
+
   // Usar el nombre del trabajador de las respuestas si está disponible
-  const nombreTrabajador = responses['Nombre del trabajador'] || usuario.nombre;
+  const nombreTrabajador = responses['Nombre del trabajador'] || nombreUsuarioDescifrado;
 
   const contenidoRespuestas = generarContenidoRespuestas(responses, questions);
 
@@ -207,8 +222,8 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
 INFORMACIÓN GENERAL:
 -------------------
 Trabajador: ${nombreTrabajador}
-Empresa: ${usuario.empresa}
-Respondido por: ${usuario.nombre}
+Empresa: ${empresaDescifrada}
+Respondido por: ${nombreUsuarioDescifrado}
 Fecha y hora: ${fecha}
 
 ${contenidoRespuestas}
@@ -227,8 +242,8 @@ Generado el: ${fecha}
   <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #3498db;">
     <h3 style="color: #2c3e50; margin-top: 0;">INFORMACIÓN GENERAL</h3>
     <p><strong>Trabajador:</strong> ${nombreTrabajador}</p>
-    <p><strong>Empresa:</strong> ${usuario.empresa}</p>
-    <p><strong>Respondido por:</strong> ${usuario.nombre}</p>
+    <p><strong>Empresa:</strong> ${empresaDescifrada}</p>
+    <p><strong>Respondido por:</strong> ${nombreUsuarioDescifrado}</p>
     <p><strong>Fecha y hora:</strong> ${fecha}</p>
   </div>
 
@@ -252,7 +267,7 @@ router.post("/", async (req, res) => {
     // El usuario que viene del frontend ya debería estar descifrado en su sesión, 
     // pero para la lógica interna usamos sus datos.
     const usuario = user;
-    const empresa = user?.empresa;
+    let empresa = user?.empresa;
     const userId = user?.uid;
     const token = user?.token;
 
@@ -263,14 +278,23 @@ router.post("/", async (req, res) => {
       return res.status(401).json({ error: tokenValido.reason });
     }
 
+    // Descifrar empresa si está cifrada
+    let empresaDescifrada = empresa;
+    if (empresa && empresa.includes(':')) {
+      empresaDescifrada = decrypt(empresa);
+      console.log("Empresa descifrada para validación:", empresaDescifrada);
+    }
+
     let form = null;
     if (ObjectId.isValid(formId)) {
       form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
       if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
 
-      const empresaAutorizada = form.companies?.includes(empresa) || form.companies?.includes("Todas");
+      // Las empresas en 'form.companies' probablemente están en texto plano o son ObjectIds
+      const empresaAutorizada = form.companies?.includes(empresaDescifrada) || 
+                                form.companies?.includes("Todas");
       if (!empresaAutorizada) {
-        return res.status(403).json({ error: `La empresa ${empresa} no está autorizada.` });
+        return res.status(403).json({ error: `La empresa ${empresaDescifrada} no está autorizada.` });
       }
     } else {
       console.log(`Ticket creado: ${formId}`);
@@ -321,8 +345,14 @@ router.post("/", async (req, res) => {
       await sendEmail(mailPayload);
     }
 
+    // Descifrar nombre para notificaciones si está cifrado
+    let nombreUsuarioDescifrado = usuario;
+    if (typeof usuario === 'string' && usuario.includes(':')) {
+      nombreUsuarioDescifrado = decrypt(usuario);
+    }
+
     const notifData = {
-      titulo: `${usuario} de la empresa ${empresa} ha levantado un ticket de soporte`,
+      titulo: `${nombreUsuarioDescifrado} de la empresa ${empresaDescifrada} ha levantado un ticket de soporte`,
       descripcion: adjuntos.length > 0 ? `Incluye ${adjuntos.length} archivo(s)` : "Revisar en panel.",
       prioridad: 2,
       color: "#bb8900ff",
@@ -345,7 +375,7 @@ router.post("/", async (req, res) => {
     try {
       await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form?.section || "Soporte General", {
         nombre: usuario,
-        empresa: empresa,
+        empresa: empresa, // Pasar empresa cifrada para que generador.helper la descifre
         uid: userId,
       }, formId, formTitle);
     } catch (error) {
@@ -511,7 +541,38 @@ router.get("/:id/adjuntos/:index", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const answers = await req.db.collection("soporte").find().toArray();
-    res.json(answers);
+    
+    // Descifrar datos de usuario en cada respuesta
+    const answersDescifrados = answers.map(answer => {
+      const answerCopy = { ...answer };
+      
+      if (answerCopy.user && typeof answerCopy.user === 'object') {
+        try {
+          // Descifrar campos del usuario si están cifrados
+          if (answerCopy.user.nombre && answerCopy.user.nombre.includes(':')) {
+            answerCopy.user.nombre = decrypt(answerCopy.user.nombre);
+          }
+          if (answerCopy.user.apellido && answerCopy.user.apellido.includes(':')) {
+            answerCopy.user.apellido = decrypt(answerCopy.user.apellido);
+          }
+          if (answerCopy.user.mail && answerCopy.user.mail.includes(':')) {
+            answerCopy.user.mail = decrypt(answerCopy.user.mail);
+          }
+          if (answerCopy.user.empresa && answerCopy.user.empresa.includes(':')) {
+            answerCopy.user.empresa = decrypt(answerCopy.user.empresa);
+          }
+          if (answerCopy.user.cargo && answerCopy.user.cargo.includes(':')) {
+            answerCopy.user.cargo = decrypt(answerCopy.user.cargo);
+          }
+        } catch (error) {
+          console.error('Error descifrando datos de usuario en respuesta:', error);
+        }
+      }
+      
+      return answerCopy;
+    });
+    
+    res.json(answersDescifrados);
   } catch (err) {
     res.status(500).json({ error: "Error al obtener formularios" });
   }
@@ -520,34 +581,60 @@ router.get("/", async (req, res) => {
 router.get("/mail/:mail", async (req, res) => {
   try {
     const cleanMail = req.params.mail.toLowerCase().trim();
-    // No buscamos por "user.mail" directo porque ese valor en respuestas 
-    // podría ser plano o cifrado según cuando se guardó, pero el Blind Index 
-    // en la colección de usuarios es nuestra fuente de verdad.
-
-    // Primero validamos si el usuario existe para obtener su UID
-    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(cleanMail) });
+    // Usar Blind Index para buscar usuario
+    const mailSearchHash = createBlindIndex(cleanMail);
+    
+    const user = await req.db.collection("usuarios").findOne({ mail_index: mailSearchHash });
 
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    // Ahora buscamos en respuestas por el UID del usuario (que es inmutable)
+    // Ahora buscamos en respuestas por el UID del usuario
     const answers = await req.db.collection("soporte").find({ "user.uid": user._id.toString() }).toArray();
 
     if (!answers || answers.length === 0) {
       return res.status(404).json({ error: "No se encontraron formularios" });
     }
 
-    const answersProcessed = answers.map(answer => ({
-      _id: answer._id,
-      formId: answer.formId,
-      formTitle: answer.formTitle,
-      trabajador: answer.responses?.["Nombre del trabajador"] || "No especificado",
-      responses: answer.responses,
-      user: answer.user,
-      status: answer.status,
-      createdAt: answer.createdAt,
-      approvedAt: answer.approvedAt,
-      updatedAt: answer.updatedAt
-    }));
+    // Descifrar datos de usuario en cada respuesta
+    const answersProcessed = answers.map(answer => {
+      const answerCopy = { ...answer };
+      
+      if (answerCopy.user && typeof answerCopy.user === 'object') {
+        try {
+          // Descifrar campos del usuario si están cifrados
+          if (answerCopy.user.nombre && answerCopy.user.nombre.includes(':')) {
+            answerCopy.user.nombre = decrypt(answerCopy.user.nombre);
+          }
+          if (answerCopy.user.apellido && answerCopy.user.apellido.includes(':')) {
+            answerCopy.user.apellido = decrypt(answerCopy.user.apellido);
+          }
+          if (answerCopy.user.mail && answerCopy.user.mail.includes(':')) {
+            answerCopy.user.mail = decrypt(answerCopy.user.mail);
+          }
+          if (answerCopy.user.empresa && answerCopy.user.empresa.includes(':')) {
+            answerCopy.user.empresa = decrypt(answerCopy.user.empresa);
+          }
+          if (answerCopy.user.cargo && answerCopy.user.cargo.includes(':')) {
+            answerCopy.user.cargo = decrypt(answerCopy.user.cargo);
+          }
+        } catch (error) {
+          console.error('Error descifrando datos de usuario en respuesta:', error);
+        }
+      }
+      
+      return {
+        _id: answerCopy._id,
+        formId: answerCopy.formId,
+        formTitle: answerCopy.formTitle,
+        trabajador: answerCopy.responses?.["Nombre del trabajador"] || "No especificado",
+        responses: answerCopy.responses,
+        user: answerCopy.user,
+        status: answerCopy.status,
+        createdAt: answerCopy.createdAt,
+        approvedAt: answerCopy.approvedAt,
+        updatedAt: answerCopy.updatedAt
+      };
+    });
 
     res.json(answersProcessed);
   } catch (err) {
@@ -574,8 +661,23 @@ router.get("/mini", async (req, res) => {
       })
       .toArray();
 
-    // Procesar las respuestas en JavaScript
+    // Procesar y descifrar las respuestas
     const answersProcessed = answers.map(answer => {
+      // Descifrar campos de usuario
+      let nombreDescifrado = answer.user?.nombre || "No especificado";
+      let empresaDescifrada = answer.user?.empresa || "No especificado";
+      
+      try {
+        if (nombreDescifrado.includes(':')) {
+          nombreDescifrado = decrypt(nombreDescifrado);
+        }
+        if (empresaDescifrada.includes(':')) {
+          empresaDescifrada = decrypt(empresaDescifrada);
+        }
+      } catch (error) {
+        console.error('Error descifrando datos en /mini:', error);
+      }
+
       return {
         _id: answer._id,
         formId: answer.formId,
@@ -583,7 +685,11 @@ router.get("/mini", async (req, res) => {
         trabajador: "No especificado",
         rutTrabajador: "No especificado",
         submittedAt: answer.submittedAt,
-        user: answer.user,
+        user: {
+          nombre: nombreDescifrado,
+          empresa: empresaDescifrada,
+          uid: answer.user?.uid
+        },
         status: answer.status,
         assignedTo: answer.assignedTo,
         responses: answer.responses,
@@ -606,7 +712,32 @@ router.get("/:id", async (req, res) => {
 
     if (!form) return res.status(404).json({ error: "Respuesta no encontrado" });
 
-    res.json(form);
+    // Descifrar datos de usuario si están cifrados
+    const formDescifrado = { ...form };
+    
+    if (formDescifrado.user && typeof formDescifrado.user === 'object') {
+      try {
+        if (formDescifrado.user.nombre && formDescifrado.user.nombre.includes(':')) {
+          formDescifrado.user.nombre = decrypt(formDescifrado.user.nombre);
+        }
+        if (formDescifrado.user.apellido && formDescifrado.user.apellido.includes(':')) {
+          formDescifrado.user.apellido = decrypt(formDescifrado.user.apellido);
+        }
+        if (formDescifrado.user.mail && formDescifrado.user.mail.includes(':')) {
+          formDescifrado.user.mail = decrypt(formDescifrado.user.mail);
+        }
+        if (formDescifrado.user.empresa && formDescifrado.user.empresa.includes(':')) {
+          formDescifrado.user.empresa = decrypt(formDescifrado.user.empresa);
+        }
+        if (formDescifrado.user.cargo && formDescifrado.user.cargo.includes(':')) {
+          formDescifrado.user.cargo = decrypt(formDescifrado.user.cargo);
+        }
+      } catch (error) {
+        console.error('Error descifrando datos de usuario en respuesta individual:', error);
+      }
+    }
+
+    res.json(formDescifrado);
 
   } catch (err) {
     res.status(500).json({ error: "Error al obtener Respuesta" });
@@ -734,12 +865,22 @@ router.put("/:id/status", async (req, res) => {
       _id: new ObjectId(id)
     });
 
+    // Descifrar datos para notificaciones si es necesario
+    let formTitleDescifrado = updatedResponse.formTitle;
+    try {
+      if (formTitleDescifrado && formTitleDescifrado.includes(':')) {
+        formTitleDescifrado = decrypt(formTitleDescifrado);
+      }
+    } catch (error) {
+      console.error('Error descifrando formTitle para notificación:', error);
+    }
+
     // Enviar notificación al usuario si aplica
     if (status === 'en_revision') {
       await addNotification(req.db, {
         userId: respuesta?.user?.uid,
         titulo: "Respuestas En Revisión",
-        descripcion: `Formulario ${respuesta.formTitle} ha cambiado su estado a En Revisión.`,
+        descripcion: `Formulario ${formTitleDescifrado} ha cambiado su estado a En Revisión.`,
         prioridad: 2,
         icono: 'FileText',
         color: '#00c6f8ff',
@@ -747,10 +888,25 @@ router.put("/:id/status", async (req, res) => {
       });
     }
 
+    // Descifrar datos del usuario antes de enviar respuesta
+    const updatedResponseDescifrado = { ...updatedResponse };
+    if (updatedResponseDescifrado.user && typeof updatedResponseDescifrado.user === 'object') {
+      try {
+        if (updatedResponseDescifrado.user.nombre && updatedResponseDescifrado.user.nombre.includes(':')) {
+          updatedResponseDescifrado.user.nombre = decrypt(updatedResponseDescifrado.user.nombre);
+        }
+        if (updatedResponseDescifrado.user.empresa && updatedResponseDescifrado.user.empresa.includes(':')) {
+          updatedResponseDescifrado.user.empresa = decrypt(updatedResponseDescifrado.user.empresa);
+        }
+      } catch (error) {
+        console.error('Error descifrando datos de usuario:', error);
+      }
+    }
+
     res.json({
       success: true,
       message: `Estado cambiado a '${status}'`,
-      updatedRequest: updatedResponse
+      updatedRequest: updatedResponseDescifrado
     });
 
   } catch (err) {

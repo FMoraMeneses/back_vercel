@@ -1,33 +1,59 @@
+const { createBlindIndex, decrypt } = require("./seguridad.helper");
+
 export async function validarToken(db, token) {
-  // 1. Buscar el token y verificar que esté activo
+  // 1. Buscar el token (el campo 'token' no está cifrado)
   const tokenData = await db.collection("tokens").findOne({
-    "token": token,
-    "active": true // Solo consideramos tokens activos
+    "token": token
   });
 
   if (!tokenData) {
-    // Si no se encuentra (no existe o ya está inactivo/revocado)
-    return { ok: false, reason: "No existe o ha sido revocado" };
+    return { ok: false, reason: "No existe" };
+  }
+
+  // 2. Verificar que esté activo (campo 'active' está cifrado)
+  let activeDescifrado = false;
+  try {
+    if (tokenData.active && tokenData.active.includes(':')) {
+      // El campo está cifrado
+      const activeStr = decrypt(tokenData.active);
+      activeDescifrado = activeStr === "true";
+    } else {
+      // Si no está cifrado (durante transición o error)
+      activeDescifrado = tokenData.active === true;
+    }
+  } catch (error) {
+    console.error('Error descifrando campo active:', error);
+    return { ok: false, reason: "Error de cifrado en active" };
+  }
+
+  if (!activeDescifrado) {
+    return { ok: false, reason: "Token inactivo o revocado" };
   }
 
   const ahora = new Date();
-  // Asume que la fecha de expiración está en 'expiresAt' o 'expiration'
   const expiracion = new Date(tokenData.expiresAt || tokenData.expiration);
 
-  // 2. Verificar expiración
+  // 3. Verificar expiración
   if (ahora > expiracion) {
     // Si está expirado, lo desactivamos (revocamos) en la base de datos
-    await db.collection("tokens").updateOne(
-      { _id: tokenData._id },
-      { $set: { active: false, revokedAt: ahora } }
-    );
-    // Retornamos el estado de no válido
+    // Actualizar campo 'active' cifrado
+    try {
+      await db.collection("tokens").updateOne(
+        { _id: tokenData._id },
+        { 
+          $set: { 
+            active: encrypt("false"), // Cifrar como string
+            revokedAt: ahora 
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error al desactivar token expirado:', error);
+    }
     return { ok: false, reason: "Expirado y revocado" };
   }
 
-  // 3. Verificación de token antiguo (lógica comentada en el original)
-  // Si deseas mantener la verificación de 'mismoDia' (que no es estándar para JWTs),
-  // puedes descomentar la sección y aplicar la misma lógica de desactivación:
+  // 4. Verificación de token antiguo (manteniendo lógica comentada)
   /*
   const creacion = new Date(tokenData.createdAt);
   const mismoDia =
@@ -37,14 +63,53 @@ export async function validarToken(db, token) {
 
   if (!mismoDia) {
     // Desactivamos si es "Antiguo" según esta lógica
-    await db.collection("tokens").updateOne(
-      { _id: tokenData._id },
-      { $set: { active: false, revokedAt: ahora } }
-    );
+    try {
+      await db.collection("tokens").updateOne(
+        { _id: tokenData._id },
+        { 
+          $set: { 
+            active: encrypt("false"), // Cifrar como string
+            revokedAt: ahora 
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error al desactivar token antiguo:', error);
+    }
     return { ok: false, reason: "Antiguo y revocado" };
   }
   */
 
-  // 4. Si el token existe, está activo y no ha expirado, es válido.
-  return { ok: true };
+  // 5. Si el token existe, está activo y no ha expirado, es válido.
+  // Opcional: devolver datos descifrados adicionales si se necesitan
+  let emailDescifrado = null;
+  let rolDescifrado = null;
+  
+  try {
+    if (tokenData.email && tokenData.email.includes(':')) {
+      emailDescifrado = decrypt(tokenData.email);
+    } else {
+      emailDescifrado = tokenData.email; // Por si no está cifrado
+    }
+    
+    if (tokenData.rol && tokenData.rol.includes(':')) {
+      rolDescifrado = decrypt(tokenData.rol);
+    } else {
+      rolDescifrado = tokenData.rol; // Por si no está cifrado
+    }
+  } catch (error) {
+    console.error('Error descifrando datos del token:', error);
+    // Continuamos aunque haya error de descifrado, el token sigue siendo válido
+  }
+
+  return { 
+    ok: true,
+    data: {
+      _id: tokenData._id,
+      email: emailDescifrado,
+      rol: rolDescifrado,
+      createdAt: tokenData.createdAt,
+      expiresAt: tokenData.expiresAt
+    }
+  };
 }

@@ -11,24 +11,42 @@ router.post("/filter", async (req, res) => {
       return res.status(400).json({ error: "Faltan parámetros de autenticación (mail y token)." });
     }
 
-    const cleanMail = decrypt(mail).toLowerCase().trim();
-
     // =========================================================
     // --- PASO 1: Validar el Token ---
     // =========================================================
-    // Nota: Asegúrate de que tu función validarToken use el mail limpio para comparar
     const tokenResult = await validarToken(req.db, token);
 
     if (!tokenResult.ok) {
-      console.warn(`Intento de acceso fallido para ${cleanMail}. Razón: ${tokenResult.reason}`);
+      console.warn(`Intento de acceso fallido. Razón: ${tokenResult.reason}`);
       return res.status(401).json({ error: `Acceso denegado: ${tokenResult.reason}.` });
     }
 
+    // Obtener email del token descifrado
+    const tokenEmail = tokenResult.data.email;
+    
+    // =========================================================
+    // --- PASO 2: Verificar que el mail del cuerpo coincida con el del token ---
+    // =========================================================
+    let cleanMail;
+    
+    // Determinar si el mail del request está cifrado
+    if (mail && mail.includes(':')) {
+      // El mail está cifrado, descifrarlo
+      cleanMail = decrypt(mail).toLowerCase().trim();
+    } else {
+      // El mail ya está en texto plano
+      cleanMail = mail.toLowerCase().trim();
+    }
+
+    // Comparar el mail descifrado con el email del token
+    if (cleanMail !== tokenEmail) {
+      console.warn(`Intento de acceso con token no correspondiente. Token email: ${tokenEmail}, Request email: ${cleanMail}`);
+      return res.status(401).json({ error: "El token no corresponde al usuario especificado." });
+    }
 
     // =========================================================
-    // --- PASO 2: Obtener el Rol del Usuario (Uso de Blind Index) ---
+    // --- PASO 3: Obtener el Rol del Usuario (Uso de Blind Index) ---
     // =========================================================
-
     // Generamos el hash para buscar en la base de datos cifrada
     const mailSearchHash = createBlindIndex(cleanMail);
 
@@ -40,17 +58,23 @@ router.post("/filter", async (req, res) => {
       return res.status(401).json({ error: "Acceso denegado. Usuario no existe." });
     }
 
-    // Usamos 'rol' o 'cargo' según tu estructura (en tu ejemplo anterior usaste user.rol)
-    const userRole = user.cargo;
+    // Descifrar el cargo/rol del usuario si es necesario
+    let userRole;
+    if (user.cargo && user.cargo.includes(':')) {
+      // El cargo está cifrado
+      userRole = decrypt(user.cargo);
+    } else {
+      // El cargo ya está en texto plano
+      userRole = user.cargo;
+    }
 
     if (!userRole) {
       return res.status(403).json({ error: "Cargo no definido para el usuario." });
     }
 
     // =========================================================
-    // --- PASO 3: Filtrar las Secciones del Menú ---
+    // --- PASO 4: Filtrar las Secciones del Menú ---
     // =========================================================
-
     const allowedRoles = [userRole, 'Todas'];
 
     const menuItems = await req.db.collection('sidebar').find({
