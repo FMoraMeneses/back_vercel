@@ -715,7 +715,7 @@ router.get("/:formId/chat/", async (req, res) => {
 //enviar mensaje
 router.post("/chat", async (req, res) => {
   try {
-    const { formId, autor, admin, sendToEmail } = req.body;
+    const { formId, autor, mensaje, admin, sendToEmail } = req.body;
     if (!autor || !mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
 
     const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
@@ -788,6 +788,8 @@ router.post("/chat", async (req, res) => {
                         
                         <div class="message-box">
                             <p><strong>Formulario:</strong> ${formName}</p>
+                            <p><strong>De:</strong> ${autor}</p>
+                            <p><strong>Mensaje:</strong> "${mensaje}"</p>
                             <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
             day: '2-digit',
             month: '2-digit',
@@ -1124,148 +1126,51 @@ router.get("/:id/archived", async (req, res) => {
 // 1. SUBIR MÚLTIPLES ARCHIVOS CORREGIDOS
 // Cambia el endpoint para recibir archivos uno por uno
 
-router.post("/upload-corrected-files", async (req, res) => {
+//enviar mensaje
+router.post("/chat", async (req, res) => {
   try {
-    console.log("=== DEBUG BACKEND - HEADERS ===");
-    console.log("Content-Type:", req.headers['content-type']);
+    const { formId, autor, admin, sendToEmail } = req.body;
+    if (!autor || !formId) return res.status(400).json({ error: "Faltan campos" });
 
-    uploadMultiple.array('files', 10)(req, res, async (err) => {
-      if (err) {
-        console.error("Error en uploadMultiple:", err);
-        return res.status(400).json({ error: err.message });
-      }
+    const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
 
-      // VERIFICAR SI SE RECIBIERON FILES
-      console.log("Files recibidos:", req.files ? req.files.length : 'NONE');
-      console.log("Body fields:", Object.keys(req.body));
-      console.log("responseId:", req.body.responseId);
-      console.log("index:", req.body.index, "type:", typeof req.body.index);
-      console.log("total:", req.body.total, "type:", typeof req.body.total);
+    let query = ObjectId.isValid(formId) ? { $or: [{ _id: new ObjectId(formId) }, { formId }] } : { formId };
+    const respuesta = await req.db.collection("respuestas").findOne(query);
+    if (!respuesta) return res.status(404).json({ error: "Respuesta no encontrada" });
 
-      const { responseId, index, total } = req.body;
-      const files = req.files;
+    await req.db.collection("respuestas").updateOne({ _id: respuesta._id }, { $push: { mensajes: nuevoMensaje } });
 
-      // VALIDACIONES MEJORADAS
-      if (!responseId) {
-        return res.status(400).json({ error: 'responseId es requerido' });
-      }
-
-      if (!files || !Array.isArray(files) || files.length === 0) {
-        return res.status(400).json({
-          error: 'No se subió ningún archivo',
-          filesReceived: files ? files.length : 0
-        });
-      }
-
-      // OBTENER DATOS DEL USUARIO Y FORMULARIO
-      let userEmail = null;
-      let formName = "el formulario";
-      let userName = "Usuario";
-      let userId = null;
-
+    // ENVIAR CORREO SI ESTÁ MARCADO EL CHECKBOX Y NO ES MENSAJE DE ADMIN
+    if (sendToEmail === true && admin !== true) {
       try {
-        // Buscar la respuesta en la base de datos
-        const response = await req.db.collection("respuestas").findOne({
-          _id: new ObjectId(responseId)
-        });
+        // OBTENER DATOS PARA EL CORREO
+        let userEmail = null;
+        let formName = "el formulario";
+        let userName = autor;
+        let respuestaId = respuesta._id.toString();
 
-        console.log("=== DEBUG USUARIO ===");
-        console.log("Respuesta encontrada:", response ? "SÍ" : "NO");
-
-        if (response) {
-          // OBTENER EMAIL Y NOMBRE DEL USUARIO DESDE LA RESPUESTA
-          // El email está en texto plano en response.user.mail
-          if (response.user && response.user.mail) {
-            userEmail = response.user.mail;
-            userName = response.user.nombre || "Usuario";
-            userId = response.user.uid;
-
-            console.log("✅ Email obtenido de response.user.mail:", userEmail);
-            console.log("✅ Nombre obtenido:", userName);
-            console.log("✅ User ID obtenido:", userId);
-          } else {
-            console.log("⚠️ No se encontró response.user.mail en la respuesta");
-            console.log("Estructura de response.user:", response.user);
-          }
-
-          // OBTENER NOMBRE DEL FORMULARIO
-          if (response.formId) {
-            const form = await req.db.collection("forms").findOne({
-              _id: new ObjectId(response.formId)
-            });
-
-            if (form && form.title) {
-              formName = form.title;
-              console.log("✅ Nombre del formulario obtenido de DB:", formName);
-            } else {
-              // Fallback: usar formTitle del _contexto si existe
-              if (response._contexto && response._contexto.formTitle) {
-                formName = response._contexto.formTitle;
-                console.log("✅ Usando formTitle de _contexto:", formName);
-              }
-            }
-          } else if (response._contexto && response._contexto.formTitle) {
-            // Si no hay formId, usar el del contexto
-            formName = response._contexto.formTitle;
-            console.log("✅ Usando formTitle de _contexto (sin formId):", formName);
-          }
-        } else {
-          console.log("❌ No se encontró la respuesta con ID:", responseId);
+        // OBTENER EMAIL DEL USUARIO (CLIENTE) DESDE LA RESPUESTA
+        if (respuesta.user && respuesta.user.mail) {
+          userEmail = respuesta.user.mail;
+          userName = respuesta.user.nombre || autor;
         }
-      } catch (userInfoError) {
-        console.error("Error obteniendo información del usuario/formulario:", userInfoError);
-      }
 
-      // PROCESAR CADA ARCHIVO
-      for (const file of files) {
-        console.log(`Procesando archivo: ${file.originalname}, size: ${file.size}`);
-
-        const correctedFile = {
-          fileName: normalizeFilename(file.originalname),
-          tipo: 'pdf',
-          fileData: file.buffer,
-          fileSize: file.size,
-          mimeType: file.mimetype,
-          uploadedAt: new Date(),
-          order: parseInt(index) + 1 || 1
-        };
-
-        // BUSCAR O CREAR DOCUMENTO EN LA DB
-        const existingApproval = await req.db.collection("aprobados").findOne({
-          responseId: responseId
-        });
-
-        if (existingApproval) {
-          const result = await req.db.collection("aprobados").findOneAndUpdate(
-            { responseId: responseId },
-            {
-              $push: { correctedFiles: correctedFile },
-              $set: { updatedAt: new Date() }
-            },
-            { returnDocument: 'after' }
-          );
-          console.log(`✅ Archivo agregado a DB. Total ahora:`, result.value?.correctedFiles?.length);
-        } else {
-          await req.db.collection("aprobados").insertOne({
-            responseId: responseId,
-            correctedFiles: [correctedFile],
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            approvedAt: null,
-            approvedBy: null
+        // OBTENER NOMBRE DEL FORMULARIO
+        if (respuesta.formId) {
+          const form = await req.db.collection("forms").findOne({
+            _id: new ObjectId(respuesta.formId)
           });
-          console.log(`✅ Nuevo documento creado en DB con 1 archivo`);
+          if (form && form.title) {
+            formName = form.title;
+          }
+        } else if (respuesta._contexto && respuesta._contexto.formTitle) {
+          formName = respuesta._contexto.formTitle;
         }
-      }
 
-      // ✅ ENVIAR CORREO AL USUARIO DESPUÉS DE SUBIR A LA DB
-      let emailSent = false;
-      if (userEmail) {
-        try {
-          const { sendEmail } = require("../utils/mail.helper");
-          const portalUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
-          const responseUrl = `${portalUrl}/?id=${responseId}`;
-
+        // ENVIAR CORREO SI TENEMOS EMAIL
+        if (userEmail) {
+          const baseUrl = process.env.PORTAL_URL || "https://infoacciona.cl";
+          const responseUrl = `${baseUrl}/?id=${respuestaId}`;
 
           const emailHtml = `
             <!DOCTYPE html>
@@ -1278,8 +1183,11 @@ router.post("/upload-corrected-files", async (req, res) => {
                     .header { background-color: #4f46e5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
                     .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e5e7eb; }
                     .button { display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
-                    .details { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; }
+                    .button:hover { background-color: #4338ca; }
+                    .message-box { background-color: #f0f9ff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5; }
                     .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+                    .title { color: #1f2937; font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+                    .hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
                 </style>
             </head>
             <body>
@@ -1288,27 +1196,41 @@ router.post("/upload-corrected-files", async (req, res) => {
                         <h1>Acciona Centro de Negocios</h1>
                     </div>
                     <div class="content">
-                        <h2>📄 Documentos aprobados disponibles</h2>
+                        <h2 class="title">Tienes un nuevo mensaje en la plataforma de Recursos Humanos</h2>
+                        
                         <p>Estimado/a <strong>${userName}</strong>,</p>
                         
-                        <div class="details">
+                        <div class="message-box">
                             <p><strong>Formulario:</strong> ${formName}</p>
-                            <p><strong>Fecha de recepción:</strong> ${new Date().toLocaleDateString('es-CL')}</p>
-                            <p><strong>N° de respuesta:</strong> ${responseId}</p>
+                            <p><strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-CL', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          })}</p>
                         </div>
                         
-                        <p>Se han cargado documentos aprobados correspondientes a tu respuesta. 
-                        Ya puedes revisarlos y proceder con la firma digital.</p>
+                        <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
                         
-                        <a href="${portalUrl}${responseId}" class="button">
-                            🔍 Ver documentos en el portal
-                        </a>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${responseUrl}" class="button">
+                                📋 Ver detalles de la solicitud
+                            </a>
+                        </div>
                         
-                        <p><small>O copia este enlace en tu navegador:<br>
-                        ${portalUrl}${responseId}</small></p>
+                        <div class="hr"></div>
+                        
+                        <p style="font-size: 14px; color: #6b7280;">
+                            Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+                            <a href="${responseUrl}" style="color: #4f46e5; word-break: break-all;">${responseUrl}</a>
+                        </p>
                         
                         <div class="footer">
-                            <p>Este es un mensaje automático. Si tienes dudas, contacta a tu ejecutivo.</p>
+                            <p>Este es un mensaje automático de la plataforma de Recursos Humanos de Acciona Centro de Negocios.</p>
+                            <p>Una vez en la plataforma, puedes acceder a los mensajes desde la sección de chat.</p>
+                            <p>Por favor, no responder a este correo.</p>
                             <p>© ${new Date().getFullYear()} Acciona Centro de Negocios Spa.</p>
                         </div>
                     </div>
@@ -1317,60 +1239,53 @@ router.post("/upload-corrected-files", async (req, res) => {
             </html>
           `;
 
-          console.log("📧 Enviando correo a:", userEmail);
-          console.log("📧 Asunto: Documentos aprobados disponibles - ${formName} - Acciona");
+          // USAR LA MISMA FUNCIÓN DE ENVÍO DE CORREOS QUE EN upload-corrected-files
+          const { sendEmail } = require("../utils/mail.helper");
 
           await sendEmail({
             to: userEmail,
-            subject: `📄 Documentos aprobados disponibles - ${formName} - Acciona`,
+            subject: `📋 Nuevo mensaje - Plataforma RRHH - ${formName}`,
             html: emailHtml
           });
 
-          emailSent = true;
-          console.log(`✅ Correo enviado exitosamente a: ${userEmail}`);
-
-          // Registrar notificación en DB
-          if (userId) {
-            await req.db.collection("notificaciones").insertOne({
-              userId: userId,
-              tipo: "documentos_subidos",
-              titulo: "Documentos aprobados disponibles",
-              descripcion: `Se han subido documentos aprobados para el formulario "${formName}"`,
-              data: {
-                responseId: responseId,
-                formName: formName,
-                filesCount: files.length
-              },
-              leido: false,
-              createdAt: new Date()
-            });
-            console.log(`✅ Notificación registrada en DB para usuario: ${userId}`);
-          }
-
-        } catch (emailError) {
-          console.error("❌ Error enviando correo:", emailError);
-          // Continuamos aunque falle el correo
+          console.log(`Correo enviado exitosamente a: ${userEmail}`);
+          console.log(`URL de respuesta: ${responseUrl}`);
         }
-      } else {
-        console.log("⚠️ No se pudo obtener el email del usuario, no se envía correo");
-        console.log("response.user.mail era:", userEmail);
+      } catch (emailError) {
+        console.error("Error enviando correo:", emailError);
+        // Continuamos aunque falle el correo, no afecta la respuesta del mensaje
       }
+    }
 
-      res.json({
-        success: true,
-        message: `Archivo(s) subido(s) exitosamente a la base de datos`,
-        filesProcessed: files.length,
-        emailSent: emailSent,
-        uploadedToDB: true,
-        userNotified: emailSent
+    // NOTIFICACIONES (lógica original mantenida)
+    if (respuesta?.user?.nombre === autor) {
+      const notifChat = {
+        filtro: { cargo: "RRHH" },
+        titulo: "Nuevo mensaje en formulario",
+        descripcion: `${autor} ha enviado un mensaje.`,
+        icono: "Edit", color: "#45577eff",
+        actionUrl: `/RespuestasForms?id=${respuesta._id}`,
+      };
+      await addNotification(req.db, notifChat);
+      await addNotification(req.db, { ...notifChat, filtro: { cargo: "admin" } });
+    } else {
+      await addNotification(req.db, {
+        userId: respuesta.user.uid,
+        titulo: "Nuevo mensaje recibido",
+        descripcion: `${autor} le ha enviado un mensaje.`,
+        icono: "MessageCircle", color: "#45577eff",
+        actionUrl: `/?id=${respuesta._id}`,
       });
+    }
+
+    res.json({
+      message: "Mensaje enviado",
+      data: nuevoMensaje,
+      emailSent: sendToEmail === true && admin !== true
     });
-  } catch (error) {
-    console.error('Error completo:', error);
-    res.status(500).json({
-      error: `Error: ${error.message}`,
-      uploadedToDB: false
-    });
+  } catch (err) {
+    console.error("Error en chat:", err);
+    res.status(500).json({ error: "Error en chat" });
   }
 });
 
