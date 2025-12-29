@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const docx = require("docx");
 const { Document, Packer, Paragraph, TextRun, AlignmentType, Table, TableRow, TableCell, WidthType, ImageRun, BorderStyle } = docx;
-const { createBlindIndex, verifyPassword, decrypt } = require("./seguridad.helper");
+const { createBlindIndex, verifyPassword, decrypt, encrypt } = require("./seguridad.helper");
 
 // ========== FUNCIONES DE UTILIDAD (MANTENIDAS) ==========
 
@@ -62,47 +62,84 @@ const ORDINALES = [
 
 async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
     try {
-        console.log("=== BUSCANDO EMPRESA EN BD ===");
+        console.log("=== BUSCANDO EMPRESA EN BD (CIFRADA) ===");
         console.log("Nombre empresa buscado:", nombreEmpresa);
 
         if (!db || typeof db.collection !== 'function') {
             throw new Error("Base de datos no disponible");
         }
 
+        // IMPORTANTE: Las empresas están cifradas, buscar por índice ciego
+        const empresaIndex = createBlindIndex(nombreEmpresa);
+        
+        console.log("Buscando por blind index:", empresaIndex);
+        
         const empresa = await db.collection('empresas').findOne({
-            nombre: { $regex: new RegExp(nombreEmpresa, 'i') }
+            nombre_index: empresaIndex
         });
 
-        console.log("Empresa encontrada en BD:", empresa);
+        console.log("Empresa encontrada en BD:", empresa ? "SÍ" : "NO");
 
         if (empresa) {
+            // Descifrar todos los campos cifrados
             return {
                 nombre: decrypt(empresa.nombre),
                 rut: decrypt(empresa.rut),
                 encargado: decrypt(empresa.encargado) || "",
                 direccion: decrypt(empresa.direccion) || "",
                 rut_encargado: decrypt(empresa.rut_encargado) || "",
-                logo: empresa.logo
+                logo: empresa.logo ? {
+                    ...empresa.logo,
+                    fileData: empresa.logo.fileData ? decrypt(empresa.logo.fileData) : null
+                } : null
             };
         }
 
-        const palabras = nombreEmpresa.toUpperCase().split(' ');
-        for (const palabra of palabras) {
-            if (palabra.length > 3) {
-                const empresaPorPalabra = await db.collection('empresas').findOne({
-                    nombre: { $regex: new RegExp(palabra, 'i') }
-                });
+        // Búsqueda alternativa por RUT (también cifrado)
+        const rutIndex = createBlindIndex(nombreEmpresa);
+        const empresaPorRut = await db.collection('empresas').findOne({
+            rut_index: rutIndex
+        });
 
-                if (empresaPorPalabra) {
-                    console.log("Empresa encontrada por palabra clave:", empresaPorPalabra);
+        if (empresaPorRut) {
+            console.log("Empresa encontrada por RUT");
+            return {
+                nombre: decrypt(empresaPorRut.nombre),
+                rut: decrypt(empresaPorRut.rut),
+                encargado: decrypt(empresaPorRut.encargado) || "",
+                direccion: decrypt(empresaPorRut.direccion) || "",
+                rut_encargado: decrypt(empresaPorRut.rut_encargado) || "",
+                logo: empresaPorRut.logo ? {
+                    ...empresaPorRut.logo,
+                    fileData: empresaPorRut.logo.fileData ? decrypt(empresaPorRut.logo.fileData) : null
+                } : null
+            };
+        }
+
+        // Búsqueda exhaustiva descifrando cada empresa (último recurso)
+        console.log("Realizando búsqueda exhaustiva...");
+        const todasEmpresas = await db.collection('empresas').find({}).toArray();
+        
+        for (const emp of todasEmpresas) {
+            try {
+                const nombreDescifrado = decrypt(emp.nombre);
+                if (nombreDescifrado.toLowerCase().includes(nombreEmpresa.toLowerCase())) {
+                    console.log("Empresa encontrada en búsqueda exhaustiva");
                     return {
-                        nombre: decrypt(empresaPorPalabra.nombre),
-                        rut: decrypt(empresaPorPalabra.rut),
-                        encargado: decrypt(empresaPorPalabra.encargado) || "",
-                        rut_encargado: decrypt(empresaPorPalabra.rut_encargado) || "",
-                        logo: empresaPorPalabra.logo
+                        nombre: nombreDescifrado,
+                        rut: decrypt(emp.rut),
+                        encargado: decrypt(emp.encargado) || "",
+                        direccion: decrypt(emp.direccion) || "",
+                        rut_encargado: decrypt(emp.rut_encargado) || "",
+                        logo: emp.logo ? {
+                            ...emp.logo,
+                            fileData: emp.logo.fileData ? decrypt(emp.logo.fileData) : null
+                        } : null
                     };
                 }
+            } catch (decryptError) {
+                console.error("Error descifrando empresa:", decryptError);
+                continue;
             }
         }
 
@@ -121,8 +158,26 @@ function crearLogoImagen(logoData) {
     }
 
     try {
+        // Si el fileData es un string (base64 descifrado), convertirlo a Buffer
+        let imageBuffer;
+        if (typeof logoData.fileData === 'string') {
+            // Verificar si ya es base64
+            if (logoData.fileData.includes('base64,')) {
+                const base64Data = logoData.fileData.split('base64,')[1];
+                imageBuffer = Buffer.from(base64Data, 'base64');
+            } else {
+                // Asumir que ya es base64 puro
+                imageBuffer = Buffer.from(logoData.fileData, 'base64');
+            }
+        } else if (Buffer.isBuffer(logoData.fileData)) {
+            imageBuffer = logoData.fileData;
+        } else {
+            console.error('Formato de imagen no reconocido');
+            return null;
+        }
+
         return new ImageRun({
-            data: logoData.fileData.buffer,
+            data: imageBuffer,
             transformation: {
                 width: 100,
                 height: 100,
@@ -215,7 +270,8 @@ async function extraerVariablesDeRespuestas(responses, userData, db) {
                     rut: empresaInfo.rut,
                     encargado: empresaInfo.encargado,
                     direccion: empresaInfo.direccion,
-                    rut_encargado: empresaInfo.rut_encargado
+                    rut_encargado: empresaInfo.rut_encargado,
+                    tieneLogo: !!empresaInfo.logo
                 });
             }
         } catch (error) {
@@ -314,9 +370,7 @@ function evaluarCondicional(conditionalVar, variables) {
 
     console.log(`SIMPLE: ${varName} no tiene valor - NO INCLUIR`);
     return false;
-}
-
-function reemplazarVariablesEnContenido(contenido, variables) {
+}function reemplazarVariablesEnContenido(contenido, variables) {
     console.log("=== REEMPLAZANDO VARIABLES EN CONTENIDO ===");
 
     let contenidoProcesado = contenido;
@@ -362,7 +416,6 @@ function reemplazarVariablesEnContenido(contenido, variables) {
     console.log("Contenido procesado (TextRuns):", textRuns.length, "elementos");
     return textRuns;
 }
-
 function procesarTextoFirma(textoFirma, variables) {
     if (!textoFirma) return '';
 
@@ -394,13 +447,18 @@ async function generarDocumentoDesdePlantilla(responses, responseId, db, plantil
 
         const children = [];
 
-        if (logo) {
-            const logoImagen = crearLogoImagen(logo);
-            if (logoImagen) {
-                children.push(new Paragraph({
-                    children: [logoImagen]
-                }));
-                children.push(new Paragraph({ text: "" }));
+        if (logo && logo.fileData) {
+            try {
+                const logoImagen = crearLogoImagen(logo);
+                if (logoImagen) {
+                    children.push(new Paragraph({
+                        children: [logoImagen]
+                    }));
+                    children.push(new Paragraph({ text: "" }));
+                    console.log("Logo añadido al documento");
+                }
+            } catch (logoError) {
+                console.error("Error procesando logo:", logoError);
             }
         }
 
@@ -650,6 +708,7 @@ function limpiarFileName(texto) {
         .replace(/^_+|_+$/g, '')
         .toUpperCase();
 }
+
 function reemplazarVariablesEnContenido(contenido, variables) {
     console.log("=== REEMPLAZANDO VARIABLES EN CONTENIDO ===");
 
@@ -699,6 +758,7 @@ function reemplazarVariablesEnContenido(contenido, variables) {
     console.log("Contenido procesado (TextRuns):", textRuns.length, "elementos");
     return textRuns;
 }
+
 async function generarDocumentoTxt(responses, responseId, db, formTitle) {
     try {
         console.log("=== GENERANDO DOCUMENTO TXT MEJORADO ===");
@@ -825,7 +885,7 @@ async function generarAnexoDesdeRespuesta(responses, responseId, db, section, us
         console.error('Error en generarAnexoDesdeRespuesta:', error);
 
         console.log("Fallback a TXT por error");
-        return await generarDocumentoTxt(responses, responseId, db);
+        return await generarDocumentoTxt(responses, responseId, db, formTitle);
     }
 }
 
