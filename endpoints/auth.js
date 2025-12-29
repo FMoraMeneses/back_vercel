@@ -10,7 +10,7 @@ const { encrypt, createBlindIndex, verifyPassword, decrypt } = require("../utils
 
 const getAhoraChile = () => {
   const d = new Date();
-  return new Date(d.toLocaleString("en-US", {timeZone: "America/Santiago"}));
+  return new Date(d.toLocaleString("en-US", { timeZone: "America/Santiago" }));
 };
 
 
@@ -1070,7 +1070,7 @@ router.post("/set-password", async (req, res) => {
 router.get("/empresas/todas", async (req, res) => {
   try {
     const empresas = await req.db.collection("empresas").find().toArray();
-    
+
     const empresasDescifradas = empresas.map(emp => ({
       ...emp,
       nombre: decrypt(emp.nombre),
@@ -1079,7 +1079,7 @@ router.get("/empresas/todas", async (req, res) => {
       encargado: decrypt(emp.encargado),
       rut_encargado: decrypt(emp.rut_encargado),
       // No desciframos el logo aquí para no saturar la respuesta de la lista
-      logo: emp.logo ? { ...emp.logo, fileData: undefined } : null 
+      logo: emp.logo ? { ...emp.logo, fileData: undefined } : null
     }));
 
     res.json(empresasDescifradas);
@@ -1217,40 +1217,58 @@ router.delete("/empresas/:id", async (req, res) => {
   }
 });
 
-router.get("/mantenimiento/migrar-empresas-pqc", async (req, res) => {
+router.get("/mantenimiento/migrar-tokens-pqc", async (req, res) => {
   try {
-    const empresas = await req.db.collection("empresas").find().toArray();
+    const tokens = await req.db.collection("tokens").find().toArray();
     let cont = 0;
 
-    for (let emp of empresas) {
+    for (let tokenDoc of tokens) {
       const updates = {};
-      
-      // Cifrar campos de texto si no tienen el formato cifrado "iv:tag:data"
-      if (emp.nombre && !emp.nombre.includes(':')) {
-        updates.nombre = encrypt(emp.nombre);
-        updates.nombre_index = createBlindIndex(emp.nombre);
-      }
-      if (emp.rut && !emp.rut.includes(':')) {
-        updates.rut = encrypt(emp.rut);
-        updates.rut_index = createBlindIndex(emp.rut);
-      }
-      if (emp.direccion && !emp.direccion.includes(':')) updates.direccion = encrypt(emp.direccion);
-      if (emp.encargado && !emp.encargado.includes(':')) updates.encargado = encrypt(emp.encargado);
-      if (emp.rut_encargado && !emp.rut_encargado.includes(':')) updates.rut_encargado = encrypt(emp.rut_encargado);
 
-      // Cifrar el logo si existe y es un Buffer/Base64 plano
-      if (emp.logo && emp.logo.fileData && !emp.logo.fileData.toString().includes(':')) {
-        const dataStr = Buffer.isBuffer(emp.logo.fileData) ? emp.logo.fileData.toString('base64') : emp.logo.fileData;
-        updates["logo.fileData"] = encrypt(dataStr);
+      // Cifrar email si no tiene el formato cifrado "iv:tag:data"
+      if (tokenDoc.email && !tokenDoc.email.includes(':')) {
+        updates.email = encrypt(tokenDoc.email);
+        updates.email_index = createBlindIndex(tokenDoc.email);
+      }
+
+      // Cifrar rol si no tiene el formato cifrado "iv:tag:data"
+      if (tokenDoc.rol && !tokenDoc.rol.includes(':')) {
+        updates.rol = encrypt(tokenDoc.rol);
+      }
+
+      // Cifrar active (convertir booleano a string y cifrar)
+      if (tokenDoc.active !== undefined && tokenDoc.active !== null) {
+        // Si ya está cifrado, mantenerlo
+        if (typeof tokenDoc.active === 'string' && tokenDoc.active.includes(':')) {
+          // Ya está cifrado, no hacer nada
+        }
+        // Si es booleano, cifrarlo
+        else if (typeof tokenDoc.active === 'boolean') {
+          const activeStr = tokenDoc.active.toString();
+          updates.active = encrypt(activeStr);
+        }
+        // Si es string pero no cifrado, cifrarlo
+        else if (typeof tokenDoc.active === 'string' && !tokenDoc.active.includes(':')) {
+          updates.active = encrypt(tokenDoc.active);
+        }
       }
 
       if (Object.keys(updates).length > 0) {
-        await req.db.collection("empresas").updateOne({ _id: emp._id }, { $set: updates });
+        await req.db.collection("tokens").updateOne({ _id: tokenDoc._id }, { $set: updates });
         cont++;
       }
     }
-    res.json({ success: true, message: `Empresas migradas: ${cont}` });
+
+    res.json({
+      success: true,
+      message: `Tokens migrados: ${cont}/${tokens.length}`,
+      total: tokens.length,
+      migrados: cont,
+      nota: "Se añadió email_index para búsquedas por email"
+    });
+
   } catch (err) {
+    console.error('Error migrando tokens:', err);
     res.status(500).json({ error: err.message });
   }
 });
