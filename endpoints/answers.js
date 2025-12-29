@@ -715,10 +715,10 @@ router.get("/:formId/chat/", async (req, res) => {
 //enviar mensaje
 router.post("/chat", async (req, res) => {
   try {
-    const { formId, admin, sendToEmail } = req.body;
-    if (!mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
+    const { formId, autor, admin, sendToEmail } = req.body;
+    if (!autor || !mensaje || !formId) return res.status(400).json({ error: "Faltan campos" });
 
-    const nuevoMensaje = {  mensaje, leido: false, fecha: new Date(), admin: admin || false };
+    const nuevoMensaje = { autor, mensaje, leido: false, fecha: new Date(), admin: admin || false };
 
     let query = ObjectId.isValid(formId) ? { $or: [{ _id: new ObjectId(formId) }, { formId }] } : { formId };
     const respuesta = await req.db.collection("respuestas").findOne(query);
@@ -732,6 +732,7 @@ router.post("/chat", async (req, res) => {
         // OBTENER DATOS PARA EL CORREO
         let userEmail = null;
         let formName = "el formulario";
+        let userName = autor;
         let respuestaId = respuesta._id.toString();
 
         // OBTENER EMAIL DEL USUARIO (CLIENTE) DESDE LA RESPUESTA
