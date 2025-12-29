@@ -777,7 +777,7 @@ router.post("/validate", async (req, res) => {
     // Buscar token (el campo 'token' no está cifrado)
     const tokenRecord = await req.db.collection("tokens").findOne({ 
       token, 
-      active: encrypt("true") // 'active' está cifrado como string
+      active: encrypt(true) // 'active' está cifrado como string
     });
     
     if (!tokenRecord)
@@ -798,7 +798,7 @@ router.post("/validate", async (req, res) => {
       // Desactivar token (cifrar como "false")
       await req.db.collection("tokens").updateOne(
         { token },
-        { $set: { active: encrypt("false"), revokedAt: new Date() } }
+        { $set: { active: encrypt(false), revokedAt: new Date() } }
       );
       return res.status(401).json({
         valid: false,
