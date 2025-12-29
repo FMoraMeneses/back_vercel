@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const docx = require("docx");
 const { Document, Packer, Paragraph, TextRun, AlignmentType, Table, TableRow, TableCell, WidthType, ImageRun, BorderStyle } = docx;
+const { createBlindIndex, verifyPassword, decrypt } = require("seguridad.helper");
 
 // ========== FUNCIONES DE UTILIDAD (MANTENIDAS) ==========
 
