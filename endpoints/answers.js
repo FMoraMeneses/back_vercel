@@ -800,7 +800,7 @@ router.post("/chat", async (req, res) => {
                         
                         <p>Para ver los detalles de la solicitud y responder al mensaje, haz clic en el siguiente botón:</p>
                         
-                        <div style="text-align: center; margin: 30px 0;">
+                        <div style="text-align: center; margin: 30px 0; color: #ffffffff;">
                             <a href="${responseUrl}" class="button">
                                 📋 Ver detalles de la solicitud
                             </a>
