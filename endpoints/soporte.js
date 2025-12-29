@@ -83,7 +83,7 @@ const uploadMultiple = multer({
 });
 
 const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, questions) => {
-  
+
   /**
    * Función para procesar preguntas y respuestas en formato texto
    * Similar a generarDocumentoTxt pero adaptado para correo
@@ -94,28 +94,28 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
 
     // Usar la misma lógica que en generarDocumentoTxt pero estructurado por preguntas
     let index = 1;
-    
+
     // Procesar preguntas principales
     const procesarPreguntas = (preguntas, nivel = 0, contexto = '') => {
       let contenidoLocal = '';
       const indent = '  '.repeat(nivel);
-      
+
       preguntas.forEach((pregunta, preguntaIndex) => {
         if (!pregunta || !pregunta.title) return;
-        
+
         const tituloPregunta = pregunta.title;
         const respuesta = obtenerRespuestaPorTitulo(tituloPregunta, responses);
-        
+
         // Solo mostrar si tiene respuesta o es requerida
-        const tieneRespuesta = respuesta !== undefined && respuesta !== null && 
-                              respuesta !== '' && !(Array.isArray(respuesta) && respuesta.length === 0);
-        
+        const tieneRespuesta = respuesta !== undefined && respuesta !== null &&
+          respuesta !== '' && !(Array.isArray(respuesta) && respuesta.length === 0);
+
         if (tieneRespuesta || pregunta.required) {
           const numeroPregunta = nivel === 0 ? `${index}.` : `  ${preguntaIndex + 1}.`;
           const tituloCompleto = contexto ? `${contexto} - ${tituloPregunta}` : tituloPregunta;
-          
+
           contenidoLocal += `${indent}${numeroPregunta} ${tituloCompleto}\n`;
-          
+
           // Formatear respuesta (igual que en TXT)
           if (Array.isArray(respuesta)) {
             contenidoLocal += `${indent}   - ${respuesta.join(`\n${indent}   - `)}\n\n`;
@@ -124,24 +124,24 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
           } else {
             contenidoLocal += `${indent}   ${respuesta || 'Sin respuesta'}\n\n`;
           }
-          
+
           if (nivel === 0) index++;
         }
-        
+
         // Procesar subsecciones (opciones con subformularios)
         if (pregunta.options) {
           pregunta.options.forEach((opcion, opcionIndex) => {
             if (typeof opcion === 'object' && opcion.hasSubform && opcion.subformQuestions) {
               const textoOpcion = opcion.text || `Opción ${opcionIndex + 1}`;
               const opcionRespuesta = obtenerRespuestaPorTitulo(pregunta.title, responses);
-              const deberiaProcesar = 
+              const deberiaProcesar =
                 pregunta.type === 'single_choice' ? opcionRespuesta === textoOpcion :
-                pregunta.type === 'multiple_choice' ? Array.isArray(opcionRespuesta) && opcionRespuesta.includes(textoOpcion) : false;
-              
+                  pregunta.type === 'multiple_choice' ? Array.isArray(opcionRespuesta) && opcionRespuesta.includes(textoOpcion) : false;
+
               if (deberiaProcesar) {
                 contenidoLocal += procesarPreguntas(
-                  opcion.subformQuestions, 
-                  nivel + 1, 
+                  opcion.subformQuestions,
+                  nivel + 1,
                   `${tituloPregunta} - ${textoOpcion}`
                 );
               }
@@ -149,7 +149,7 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
           });
         }
       });
-      
+
       return contenidoLocal;
     };
 
@@ -182,7 +182,7 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
     if (responses[tituloPregunta] !== undefined) {
       return responses[tituloPregunta];
     }
-    
+
     // Si no encuentra, buscar en _contexto si existe
     if (responses._contexto) {
       for (const contexto in responses._contexto) {
@@ -191,15 +191,15 @@ const generarContenidoCorreoRespaldo = (formTitle, usuario, fecha, responses, qu
         }
       }
     }
-    
+
     return undefined;
   };
 
   // Usar el nombre del trabajador de las respuestas si está disponible
   const nombreTrabajador = responses['Nombre del trabajador'] || usuario.nombre;
-  
+
   const contenidoRespuestas = generarContenidoRespuestas(responses, questions);
-  
+
   // Contenido en texto plano (estructura similar al TXT)
   const texto = `RESPALDO DE RESPUESTAS - FORMULARIO: ${formTitle}
 =================================================
@@ -302,14 +302,14 @@ router.post("/", async (req, res) => {
         timeStyle: 'medium'
       });
       const questions = form?.questions || [];
-
+      usuario = user;
       const contenido = generarContenidoCorreoRespaldo(
-            formTitle, 
-            usuario, 
-            fechaHora, 
-            responses, 
-            questions
-          );
+        formTitle,
+        usuario,
+        fechaHora,
+        responses,
+        questions
+      );
 
       const mailPayload = {
         accessKey: "wBlL283JH9TqdEJRxon1QOBuI0A6jGVEwpUYchnyMGz", // Reemplaza con tu clave real
