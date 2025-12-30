@@ -1405,6 +1405,179 @@ router.delete("/empresas/:id", async (req, res) => {
   }
 });
 
+router.get("/mantenimiento/migrar-empresas-pqc", async (req, res) => {
+  try {
+    const empresas = await req.db.collection("empresas").find().toArray();
+    let cont = 0;
+    let logosProcesados = 0;
+    let logosConError = 0;
+    let logosYaCifrados = 0;
+
+    console.log(`Iniciando migración de ${empresas.length} empresas...`);
+
+    for (let emp of empresas) {
+      const updates = {};
+      let procesado = false;
+
+      console.log(`\nProcesando empresa ${emp._id}:`);
+
+      // 1. Cifrar campos de texto
+      if (emp.nombre && !emp.nombre.includes(':')) {
+        updates.nombre = encrypt(emp.nombre);
+        updates.nombre_index = createBlindIndex(emp.nombre);
+        procesado = true;
+        console.log(`  ✓ Nombre cifrado`);
+      }
+
+      if (emp.rut && !emp.rut.includes(':')) {
+        updates.rut = encrypt(emp.rut);
+        updates.rut_index = createBlindIndex(emp.rut);
+        procesado = true;
+        console.log(`  ✓ RUT cifrado`);
+      }
+
+      if (emp.direccion && !emp.direccion.includes(':')) {
+        updates.direccion = encrypt(emp.direccion);
+        procesado = true;
+        console.log(`  ✓ Dirección cifrada`);
+      }
+
+      if (emp.encargado && !emp.encargado.includes(':')) {
+        updates.encargado = encrypt(emp.encargado);
+        procesado = true;
+        console.log(`  ✓ Encargado cifrado`);
+      }
+
+      if (emp.rut_encargado && !emp.rut_encargado.includes(':')) {
+        updates.rut_encargado = encrypt(emp.rut_encargado);
+        procesado = true;
+        console.log(`  ✓ RUT encargado cifrado`);
+      }
+
+      // 2. Cifrar logo (LA PARTE IMPORTANTE)
+      if (emp.logo && emp.logo.fileData) {
+        console.log(`  Logo encontrado: ${emp.logo.fileName}`);
+
+        // Verificar si ya está cifrado
+        if (typeof emp.logo.fileData === 'string' && emp.logo.fileData.includes(':')) {
+          console.log(`  ⚠ Logo ya cifrado, saltando`);
+          logosYaCifrados++;
+          continue;
+        }
+
+        try {
+          let base64Str;
+
+          // MANEJO DEL BINARY (igual que el endpoint PUT)
+          if (emp.logo.fileData && emp.logo.fileData.buffer) {
+            // Caso 1: Es un Binary de MongoDB con buffer
+            console.log(`  Tipo: Binary con buffer`);
+            base64Str = Buffer.from(emp.logo.fileData.buffer).toString('base64');
+          }
+          else if (emp.logo.fileData._bsontype === 'Binary') {
+            // Caso 2: Es un Binary de MongoDB (driver viejo)
+            console.log(`  Tipo: Binary (_bsontype)`);
+            base64Str = emp.logo.fileData.toString('base64');
+          }
+          else if (Buffer.isBuffer(emp.logo.fileData)) {
+            // Caso 3: Es un Buffer puro
+            console.log(`  Tipo: Buffer`);
+            base64Str = emp.logo.fileData.toString('base64');
+          }
+          else if (typeof emp.logo.fileData === 'string') {
+            // Caso 4: Ya es string Base64
+            console.log(`  Tipo: String Base64`);
+
+            // Verificar si ya es Base64 válido
+            const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(emp.logo.fileData);
+            if (isBase64) {
+              base64Str = emp.logo.fileData;
+            } else {
+              console.log(`  ⚠ String no es Base64 válido, intentando convertir...`);
+              // Intentar tratar como binary string
+              base64Str = Buffer.from(emp.logo.fileData, 'binary').toString('base64');
+            }
+          }
+          else {
+            console.log(`  ❌ Tipo no reconocido:`, typeof emp.logo.fileData, emp.logo.fileData);
+            logosConError++;
+            continue;
+          }
+
+          // Verificar que tenemos Base64 válido
+          if (!base64Str || !/^[A-Za-z0-9+/]+=*$/.test(base64Str.substring(0, 100))) {
+            console.log(`  ❌ Base64 no válido generado`);
+            logosConError++;
+            continue;
+          }
+
+          console.log(`  Base64 generado, longitud: ${base64Str.length}`);
+
+          // CIFRAR (igual que el endpoint PUT)
+          const fileDataCifrado = encrypt(base64Str);
+
+          // Verificar cifrado
+          if (!fileDataCifrado || !fileDataCifrado.includes(':')) {
+            console.log(`  ❌ Cifrado falló`);
+            logosConError++;
+            continue;
+          }
+
+          updates["logo.fileData"] = fileDataCifrado;
+          logosProcesados++;
+          procesado = true;
+          console.log(`  ✓ Logo cifrado exitosamente`);
+
+        } catch (error) {
+          console.error(`  ❌ Error procesando logo:`, error.message);
+          logosConError++;
+          // No actualizar el logo si hay error
+        }
+      }
+
+      // Actualizar en BD si hay cambios
+      if (procesado && Object.keys(updates).length > 0) {
+        try {
+          await req.db.collection("empresas").updateOne(
+            { _id: emp._id },
+            { $set: updates }
+          );
+          cont++;
+          console.log(`  ✅ Empresa actualizada en BD`);
+        } catch (dbError) {
+          console.error(`  ❌ Error actualizando BD:`, dbError.message);
+        }
+      } else {
+        console.log(`  ⏭️ Sin cambios, saltando`);
+      }
+    }
+
+    console.log(`\n=== MIGRACIÓN COMPLETADA ===`);
+
+    res.json({
+      success: true,
+      message: `Empresas migradas: ${cont}/${empresas.length}`,
+      estadisticas: {
+        totalEmpresas: empresas.length,
+        empresasProcesadas: cont,
+        logosProcesados,
+        logosConError,
+        logosYaCifrados,
+        empresasSinCambios: empresas.length - cont
+      },
+      nota: "Los logos ahora están cifrados igual que en el endpoint PUT /empresas/:id"
+    });
+
+  } catch (err) {
+    console.error('Error en migración V3:', err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      stack: err.stack
+    });
+  }
+});
+
 router.get("/mantenimiento/migrar-tokens-pqc", async (req, res) => {
   try {
     const tokens = await req.db.collection("tokens").find().toArray();
