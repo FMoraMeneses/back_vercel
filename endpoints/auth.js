@@ -1223,18 +1223,61 @@ router.get("/empresas/todas", async (req, res) => {
   try {
     const empresas = await req.db.collection("empresas").find().toArray();
 
-    const empresasDescifradas = empresas.map(emp => ({
-      ...emp,
-      nombre: decrypt(emp.nombre),
-      rut: decrypt(emp.rut),
-      direccion: decrypt(emp.direccion),
-      encargado: decrypt(emp.encargado),
-      rut_encargado: decrypt(emp.rut_encargado),
-      logo: emp.logo ? { ...emp.logo, fileData: undefined } : null
-    }));
+    const empresasDescifradas = empresas.map(emp => {
+      // Descifrar campos de texto
+      const empresaDescifrada = {
+        _id: emp._id,
+        nombre: decrypt(emp.nombre),
+        rut: decrypt(emp.rut),
+        direccion: decrypt(emp.direccion),
+        encargado: decrypt(emp.encargado),
+        rut_encargado: decrypt(emp.rut_encargado),
+        createdAt: emp.createdAt,
+        updatedAt: emp.updatedAt,
+        logo: null
+      };
+
+      // Si tiene logo, procesarlo
+      if (emp.logo && emp.logo.fileData) {
+        try {
+          // El fileData está cifrado como Base64, necesitamos descifrarlo
+          const fileDataDescifrado = decrypt(emp.logo.fileData);
+
+          empresaDescifrada.logo = {
+            fileName: emp.logo.fileName,
+            fileData: fileDataDescifrado, // Base64 descifrado
+            fileSize: emp.logo.fileSize,
+            mimeType: emp.logo.mimeType,
+            uploadedAt: emp.logo.uploadedAt
+          };
+        } catch (error) {
+          console.error('Error procesando logo para empresa', emp._id, error);
+          // Mantener metadata pero sin fileData
+          empresaDescifrada.logo = {
+            fileName: emp.logo.fileName,
+            fileSize: emp.logo.fileSize,
+            mimeType: emp.logo.mimeType,
+            uploadedAt: emp.logo.uploadedAt,
+            error: "No se pudo descifrar"
+          };
+        }
+      } else if (emp.logo) {
+        // Si hay logo metadata pero no fileData (por si acaso)
+        empresaDescifrada.logo = {
+          fileName: emp.logo.fileName,
+          fileSize: emp.logo.fileSize,
+          mimeType: emp.logo.mimeType,
+          uploadedAt: emp.logo.uploadedAt,
+          note: "Sin datos de imagen"
+        };
+      }
+
+      return empresaDescifrada;
+    });
 
     res.json(empresasDescifradas);
   } catch (err) {
+    console.error("Error al obtener empresas:", err);
     res.status(500).json({ error: "Error al obtener empresas" });
   }
 });
