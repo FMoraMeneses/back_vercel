@@ -817,17 +817,73 @@ router.get("/mini", async (req, res) => {
   }
 });
 
+// Obtener respuesta por ID - Versión simplificada
 router.get("/:id", async (req, res) => {
   try {
-    const form = await req.db.collection("respuestas")
+    const respuesta = await req.db.collection("respuestas")
       .findOne({ _id: new ObjectId(req.params.id) });
 
-    if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
+    if (!respuesta) return res.status(404).json({ error: "Formulario no encontrado" });
 
-    res.json(form);
+    // Importar decrypt
+    const { decrypt } = require('../utils/seguridad.helper');
+
+    // Función simple para manejar campos cifrados/descifrados
+    const procesarCampo = (valor) => {
+      if (typeof valor === 'string' && valor.includes(':')) {
+        try {
+          return decrypt(valor);
+        } catch (error) {
+          console.warn("Campo con formato cifrado pero error al descifrar");
+          return valor; // Mantener original
+        }
+      }
+      return valor;
+    };
+
+    // Procesar la respuesta
+    const respuestaProcesada = { ...respuesta };
+
+    // Procesar user
+    if (respuestaProcesada.user) {
+      const userProcesado = {};
+      for (const key in respuestaProcesada.user) {
+        userProcesado[key] = procesarCampo(respuestaProcesada.user[key]);
+      }
+      respuestaProcesada.user = userProcesado;
+    }
+
+    // Procesar responses (recursivo simple)
+    const procesarResponses = (obj) => {
+      if (!obj || typeof obj !== 'object') return obj;
+
+      if (Array.isArray(obj)) {
+        return obj.map(item => procesarCampo(item));
+      }
+
+      const resultado = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string') {
+          resultado[key] = procesarCampo(valor);
+        } else if (typeof valor === 'object' && valor !== null) {
+          resultado[key] = procesarResponses(valor);
+        } else {
+          resultado[key] = valor;
+        }
+      }
+      return resultado;
+    };
+
+    if (respuestaProcesada.responses) {
+      respuestaProcesada.responses = procesarResponses(respuestaProcesada.responses);
+    }
+
+    res.json(respuestaProcesada);
 
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener formulario" });
+    res.status(500).json({ error: "Error al obtener formulario: " + err.message });
   }
 });
 
