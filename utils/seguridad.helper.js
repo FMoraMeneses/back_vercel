@@ -34,26 +34,17 @@ const encrypt = (text) => {
 const decrypt = (encryptedData) => {
     if (!encryptedData) return encryptedData;
 
+    const parts = encryptedData.split(':');
+
+    if (parts.length !== 3) {
+        if (parts.length === 2 && /^\d{1,2}:\d{2}$/.test(encryptedData)) {
+            return encryptedData;
+        }
+        return encryptedData;
+    }
+
     try {
-        const parts = encryptedData.split(':');
-
-        if (parts.length !== 3) {
-            console.error(`❌ Dato no cifrado encontrado: ${encryptedData.substring(0, 30)}...`);
-            return "[Dato no cifrado]";
-        }
-
         const [ivHex, authTagHex, encryptedText] = parts;
-        const isValidHex = (str) => /^[0-9a-fA-F]+$/.test(str);
-
-        if (!isValidHex(ivHex) || !isValidHex(authTagHex) || !isValidHex(encryptedText)) {
-            console.error(`❌ Formato hexadecimal inválido: ${encryptedData.substring(0, 30)}...`);
-            return encryptedData;
-        }
-
-        if (ivHex.length !== 24 || authTagHex.length !== 32) {
-            console.error(`❌ Longitudes inválidas: iv=${ivHex.length}, auth=${authTagHex.length}`);
-            return encryptedData;
-        }
 
         const decipher = crypto.createDecipheriv(ALGORITHM, MASTER_KEY, Buffer.from(ivHex, 'hex'));
         decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
@@ -63,37 +54,7 @@ const decrypt = (encryptedData) => {
         return decrypted;
 
     } catch (err) {
-
-        console.error(`🔥 ERROR CRÍTICO DE DESCIFRADO:`);
-        console.error(`   Dato: ${encryptedData.substring(0, 50)}...`);
-        console.error(`   Error: ${err.message}`);
-
-        const buscarHoraEnHex = (hexStr) => {
-
-            try {
-                const ascii = Buffer.from(hexStr, 'hex').toString('ascii');
-                const match = ascii.match(/(\d{1,2}:\d{2})/);
-                if (match) return match[1];
-            } catch (e) { }
-            return null;
-        };
-
-        const parts = encryptedData.split(':');
-        if (parts.length >= 3) {
-            const encryptedText = parts[2];
-            const horaRecuperada = buscarHoraEnHex(encryptedText);
-            if (horaRecuperada) {
-                console.log(`⚠️  Hora recuperada de hex: ${horaRecuperada}`);
-                return horaRecuperada;
-            }
-        }
-
-        if (/^\d{1,2}:\d{2}$/.test(encryptedData)) {
-            console.error(`⚠️  Hora aparentemente no cifrada: ${encryptedData}`);
-            return encryptedData;
-        }
-
-        return "[Error de descifrado]";
+        return encryptedData;
     }
 };
 
