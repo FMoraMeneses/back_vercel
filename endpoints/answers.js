@@ -1676,7 +1676,7 @@ router.post("/:id/approve", async (req, res) => {
       titulo: "Documento Aprobado",
       descripcion: `Se ha aprobado el documento asociado al formulario ${respuesta.formTitle} con ${approvedDoc.correctedFiles.length} archivo(s)`,
       prioridad: 2,
-      icono: 'file-text',
+      icono: 'FileText',
       color: '#47db34ff',
       actionUrl: `/?id=${responseId}`,
     });
