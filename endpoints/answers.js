@@ -2275,4 +2275,163 @@ router.put("/:id/status", async (req, res) => {
   }
 });
 
+router.get("/mantenimiento/migrar-respuestas-pqc", async (req, res) => {
+  try {
+    // Importar helpers de seguridad
+    const { encrypt } = require('../utils/seguridad.helper');
+
+    const respuestas = await req.db.collection("respuestas").find().toArray();
+    let cont = 0;
+    let totalCamposCifrados = 0;
+    let errores = 0;
+
+    console.log(`Iniciando migración PQC de ${respuestas.length} respuestas...`);
+    console.log("⚠️  Solo se cifrarán los objetos 'user' y 'responses'\n");
+
+    // Función para cifrar todos los strings en un objeto/array
+    const cifrarObjetoCompleto = (obj) => {
+      if (!obj || typeof obj !== 'object') {
+        return { objeto: obj, cifrados: 0 };
+      }
+
+      let cifrados = 0;
+
+      if (Array.isArray(obj)) {
+        const nuevoArray = [];
+        for (const item of obj) {
+          if (typeof item === 'string' && item.trim() !== '' && !item.includes(':')) {
+            nuevoArray.push(encrypt(item));
+            cifrados++;
+          } else if (typeof item === 'object' && item !== null) {
+            const { objeto: itemCifrado, cifrados: itemCifrados } = cifrarObjetoCompleto(item);
+            nuevoArray.push(itemCifrado);
+            cifrados += itemCifrados;
+          } else {
+            nuevoArray.push(item);
+          }
+        }
+        return { objeto: nuevoArray, cifrados };
+      }
+
+      const nuevoObj = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string' && valor.trim() !== '') {
+          if (valor.includes(':')) {
+            // Ya está cifrado
+            nuevoObj[key] = valor;
+          } else {
+            // Cifrar siempre
+            nuevoObj[key] = encrypt(valor);
+            cifrados++;
+          }
+        } else if (typeof valor === 'object' && valor !== null) {
+          const { objeto: valorCifrado, cifrados: valorCifrados } = cifrarObjetoCompleto(valor);
+          nuevoObj[key] = valorCifrado;
+          cifrados += valorCifrados;
+        } else {
+          nuevoObj[key] = valor;
+        }
+      }
+
+      return { objeto: nuevoObj, cifrados };
+    };
+
+    // Procesar cada respuesta
+    for (let respuesta of respuestas) {
+      console.log(`\nProcesando respuesta ${respuesta._id}:`);
+      const updates = {};
+      let cambios = false;
+      let camposEstaRespuesta = 0;
+
+      try {
+        // 1. SOLO CIFRAR 'user' COMPLETO
+        if (respuesta.user && typeof respuesta.user === 'object') {
+          console.log(`  Cifrando objeto 'user'...`);
+          const { objeto: userCifrado, cifrados: userCifrados } = cifrarObjetoCompleto(respuesta.user);
+
+          if (userCifrados > 0) {
+            updates.user = userCifrado;
+            cambios = true;
+            camposEstaRespuesta += userCifrados;
+            console.log(`  ✓ user: ${userCifrados} campos cifrados`);
+          } else {
+            console.log(`  ⚠ user: ya cifrado o sin texto`);
+          }
+        }
+
+        // 2. SOLO CIFRAR 'responses' COMPLETO
+        if (respuesta.responses && typeof respuesta.responses === 'object') {
+          console.log(`  Cifrando objeto 'responses'...`);
+          const { objeto: responsesCifrado, cifrados: responsesCifrados } = cifrarObjetoCompleto(respuesta.responses);
+
+          if (responsesCifrados > 0) {
+            updates.responses = responsesCifrado;
+            cambios = true;
+            camposEstaRespuesta += responsesCifrados;
+            console.log(`  ✓ responses: ${responsesCifrados} campos cifrados`);
+          } else {
+            console.log(`  ⚠ responses: ya cifrado o sin texto`);
+          }
+        }
+
+        // 3. NO CIFRAR '_contexto' (si existe, lo dejamos igual)
+        if (respuesta._contexto) {
+          console.log(`  ⏭️ _contexto: NO se cifra (se mantiene igual)`);
+          // No hacemos nada con _contexto
+        }
+
+        // 4. NO CIFRAR campos del nivel principal
+        // formId, formTitle, status, fechas, etc. se mantienen SIN CIFRAR
+
+        // Actualizar en BD solo si hubo cambios en user o responses
+        if (cambios && Object.keys(updates).length > 0) {
+          // Solo añadir updatedAt
+          updates.updatedAt = new Date().toISOString();
+
+          await req.db.collection("respuestas").updateOne(
+            { _id: respuesta._id },
+            { $set: updates }
+          );
+
+          cont++;
+          totalCamposCifrados += camposEstaRespuesta;
+          console.log(`  ✅ Guardado: ${camposEstaRespuesta} campos cifrados en total`);
+        } else {
+          console.log(`  ⏭️ Sin cambios necesarios`);
+        }
+
+      } catch (error) {
+        console.error(`  ❌ Error procesando respuesta:`, error.message);
+        errores++;
+      }
+    }
+
+    console.log(`\n=== MIGRACIÓN COMPLETADA ===`);
+
+    res.json({
+      success: true,
+      message: `Migración PQC completada: ${cont}/${respuestas.length} respuestas actualizadas`,
+      estadisticas: {
+        totalRespuestas: respuestas.length,
+        respuestasActualizadas: cont,
+        respuestasSinCambios: respuestas.length - cont,
+        totalCamposCifrados: totalCamposCifrados,
+        promedioCamposPorRespuesta: cont > 0 ? (totalCamposCifrados / cont).toFixed(2) : 0,
+        erroresEncontrados: errores
+      },
+      nota: "Solo se cifraron los objetos 'user' y 'responses'. Campos como status, formId, fechas se mantienen sin cifrar."
+    });
+
+  } catch (err) {
+    console.error('Error en migración PQC:', err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      stack: err.stack
+    });
+  }
+});
+
 module.exports = router;
