@@ -85,48 +85,22 @@ async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
                 encargado: decrypt(empresa.encargado),
                 direccion: decrypt(empresa.direccion),
                 rut_encargado: decrypt(empresa.rut_encargado),
-                logo: empresa.logo
+                logo: empresa.logo // Mantener el logo tal cual (puede estar cifrado)
             };
 
             console.log("Información empresa descifrada:", {
                 nombre: empresaDescifrada.nombre,
                 rut: empresaDescifrada.rut,
                 encargado: empresaDescifrada.encargado,
-                direccion: empresaDescifrada.direccion
+                direccion: empresaDescifrada.direccion,
+                tieneLogo: !!empresaDescifrada.logo,
+                logoFileDataType: empresaDescifrada.logo?.fileData ? typeof empresaDescifrada.logo.fileData : 'null'
             });
 
             return empresaDescifrada;
         }
 
         console.log("No se encontró empresa en BD con índice:", nombreIndex);
-
-        const palabras = nombreEmpresa.toUpperCase().split(' ');
-        for (const palabra of palabras) {
-            if (palabra.length > 3) {
-                const palabraIndex = createBlindIndex(palabra);
-                const empresaPorPalabra = await db.collection('empresas').findOne({
-                    nombre_index: palabraIndex
-                });
-
-                if (empresaPorPalabra) {
-                    console.log("Empresa encontrada por palabra clave por índice");
-
-                    const empresaDescifrada = {
-                        nombre: decrypt(empresaPorPalabra.nombre),
-                        rut: decrypt(empresaPorPalabra.rut),
-                        encargado: decrypt(empresaPorPalabra.encargado),
-                        direccion: decrypt(empresaPorPalabra.direccion),
-                        rut_encargado: decrypt(empresaPorPalabra.rut_encargado),
-                        logo: empresaPorPalabra.logo
-                    };
-
-                    console.log("Información empresa descifrada por palabra:", empresaDescifrada.nombre);
-                    return empresaDescifrada;
-                }
-            }
-        }
-
-        console.log("No se encontró empresa en BD");
         return null;
 
     } catch (error) {
@@ -137,12 +111,69 @@ async function obtenerEmpresaDesdeBD(nombreEmpresa, db) {
 
 function crearLogoImagen(logoData) {
     if (!logoData || !logoData.fileData) {
+        console.log('No hay logo data o fileData');
         return null;
     }
 
     try {
+        console.log('Procesando logo para DOCX...');
+        console.log('Tipo de fileData:', typeof logoData.fileData);
+        console.log('Es string cifrado?:', typeof logoData.fileData === 'string' && logoData.fileData.includes(':'));
+
+        let imageBuffer;
+
+        // CASO 1: FileData está cifrado (string con ':')
+        if (typeof logoData.fileData === 'string' && logoData.fileData.includes(':')) {
+            console.log('Logo está cifrado, descifrando...');
+            // Descifrar para obtener el Base64 original
+            const base64Descifrado = decrypt(logoData.fileData);
+            console.log('Base64 descifrado, longitud:', base64Descifrado.length);
+
+            // Verificar que sea Base64 válido
+            if (!/^[A-Za-z0-9+/]+=*$/.test(base64Descifrado.substring(0, 100))) {
+                console.error('Base64 descifrado no es válido');
+                return null;
+            }
+
+            // Convertir Base64 a Buffer
+            imageBuffer = Buffer.from(base64Descifrado, 'base64');
+            console.log('Buffer creado desde Base64 descifrado, tamaño:', imageBuffer.length);
+        }
+        // CASO 2: Es un Binary de MongoDB (tiene buffer property)
+        else if (logoData.fileData && logoData.fileData.buffer) {
+            console.log('Logo es Binary con buffer property');
+            imageBuffer = Buffer.from(logoData.fileData.buffer);
+        }
+        // CASO 3: Es un Buffer directo
+        else if (Buffer.isBuffer(logoData.fileData)) {
+            console.log('Logo es Buffer directo');
+            imageBuffer = logoData.fileData;
+        }
+        // CASO 4: Es string Base64 sin cifrar
+        else if (typeof logoData.fileData === 'string') {
+            console.log('Logo es string Base64 sin cifrar');
+            // Verificar si es Base64 válido
+            if (/^[A-Za-z0-9+/]+=*$/.test(logoData.fileData.substring(0, 100))) {
+                imageBuffer = Buffer.from(logoData.fileData, 'base64');
+            } else {
+                console.error('String no es Base64 válido');
+                return null;
+            }
+        }
+        else {
+            console.error('Tipo de fileData no reconocido:', typeof logoData.fileData);
+            return null;
+        }
+
+        if (!imageBuffer || imageBuffer.length === 0) {
+            console.error('Buffer de imagen vacío o inválido');
+            return null;
+        }
+
+        console.log('Creando ImageRun con buffer de tamaño:', imageBuffer.length);
+
         return new ImageRun({
-            data: logoData.fileData.buffer,
+            data: imageBuffer,
             transformation: {
                 width: 100,
                 height: 100,
@@ -156,8 +187,10 @@ function crearLogoImagen(logoData) {
                 },
             }
         });
+
     } catch (error) {
         console.error('Error creando imagen del logo:', error);
+        console.error('Stack:', error.stack);
         return null;
     }
 }
@@ -218,14 +251,14 @@ async function extraerVariablesDeRespuestas(responses, userData, db) {
     if (userData && userData.empresa) {
         try {
             console.log("userData.empresa (posiblemente cifrado):", userData.empresa);
-            
+
             let nombreEmpresaDescifrado = userData.empresa;
-            
+
             if (userData.empresa.includes(':')) {
                 nombreEmpresaDescifrado = decrypt(userData.empresa);
                 console.log("Empresa descifrada de userData:", nombreEmpresaDescifrado);
             }
-            
+
             const empresaInfo = await obtenerEmpresaDesdeBD(nombreEmpresaDescifrado, db);
             if (empresaInfo) {
                 if (!variables[normalizarNombreVariable('Empresa')]) {
