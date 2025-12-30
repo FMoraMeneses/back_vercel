@@ -1239,15 +1239,32 @@ router.get("/empresas/todas", async (req, res) => {
       // Si tiene logo, descifrarlo
       if (emp.logo && emp.logo.fileData) {
         try {
-          empresaDescifrada.logo = {
-            fileName: emp.logo.fileName,
-            fileData: decrypt(emp.logo.fileData), // ¡DESCIFRAR el fileData!
-            fileSize: emp.logo.fileSize,
-            mimeType: emp.logo.mimeType,
-            uploadedAt: emp.logo.uploadedAt
-          };
+          // 1. Descifrar el fileData (esto devuelve el Base64 original)
+          const fileDataDescifrado = decrypt(emp.logo.fileData);
+
+          // 2. Verificar que es Base64 válido
+          const isBase64Valid = /^[A-Za-z0-9+/]+=*$/.test(fileDataDescifrado);
+
+          if (isBase64Valid) {
+            // 3. Devolver el Base64 original para que el frontend lo use directamente
+            empresaDescifrada.logo = {
+              fileName: emp.logo.fileName,
+              fileData: fileDataDescifrado, // Base64 descifrado
+              fileSize: emp.logo.fileSize,
+              mimeType: emp.logo.mimeType,
+              uploadedAt: emp.logo.uploadedAt,
+              _isBase64: true // Marcar como Base64 para el frontend
+            };
+          } else {
+            console.error('Logo no es Base64 válido para empresa', emp._id);
+            empresaDescifrada.logo = {
+              fileName: emp.logo.fileName,
+              error: "Formato de logo inválido"
+            };
+          }
         } catch (error) {
           console.error('Error descifrando logo para empresa', emp._id, error);
+          console.error('FileData cifrado (primeros 100 chars):', emp.logo.fileData.substring(0, 100));
           empresaDescifrada.logo = {
             fileName: emp.logo.fileName,
             error: "Error al procesar logo"
