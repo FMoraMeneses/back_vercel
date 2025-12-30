@@ -6,7 +6,7 @@ const { addNotification } = require("../utils/notificaciones.helper");
 const { generarAnexoDesdeRespuesta } = require("../utils/generador.helper");
 const { enviarCorreoRespaldo } = require("../utils/mailrespaldo.helper");
 const { validarToken } = require("../utils/validarToken.js");
-const { createBlindIndex, verifyPassword, decrypt } = require("../utils/seguridad.helper");
+const { createBlindIndex, verifyPassword, encrypt, decrypt } = require("../utils/seguridad.helper");
 const { sendEmail } = require("../utils/mail.helper");
 
 // Función para normalizar nombres de archivos (versión completa y segura)
@@ -89,54 +89,108 @@ router.post("/", async (req, res) => {
   try {
     const { formId, user, responses, formTitle, adjuntos = [], mail: correoRespaldo } = req.body;
 
-    // El usuario que viene del frontend ya debería estar descifrado en su sesión, 
-    // pero para la lógica interna usamos sus datos.
+    // Importar solo tus funciones existentes
+    const { encrypt } = require('../utils/seguridad.helper');
+
+    // El usuario que viene del frontend ya debería estar descifrado en su sesión
     const usuario = user?.nombre;
     const empresa = user?.empresa;
     const userId = user?.uid;
     const token = user?.token;
 
-    console.log("=== INICIO GUARDAR RESPUESTA ===");
+    console.log("=== INICIO GUARDAR RESPUESTA (PQC) ===");
 
+    // Validar token
     const tokenValido = await validarToken(req.db, token);
     if (!tokenValido.ok) {
       return res.status(401).json({ error: tokenValido.reason });
     }
 
+    // Verificar formulario
     const form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
     if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
 
+    // Validar empresa autorizada
     const empresaAutorizada = form.companies?.includes(empresa) || form.companies?.includes("Todas");
     if (!empresaAutorizada) {
       return res.status(403).json({ error: `La empresa ${empresa} no está autorizada.` });
     }
 
-    // Insertar respuesta principal. 
-    // Nota: El objeto 'user' aquí se guarda como viene, pero el mail se busca por Blind Index si fuera necesario.
+    // CIFRAR LOS DATOS SENSIBLES ANTES DE GUARDAR
+    console.log("Cifrando datos sensibles...");
+
+    // Función simple para cifrar un objeto completo campo por campo
+    const cifrarObjeto = (obj) => {
+      if (!obj || typeof obj !== 'object') return obj;
+
+      const resultado = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string' && valor.trim() !== '' && !valor.includes(':')) {
+          // Cifrar strings que no estén ya cifrados
+          resultado[key] = encrypt(valor);
+        } else if (typeof valor === 'object' && valor !== null) {
+          // Si es objeto o array, procesar recursivamente
+          if (Array.isArray(valor)) {
+            resultado[key] = valor.map(item => {
+              if (typeof item === 'string' && item.trim() !== '' && !item.includes(':')) {
+                return encrypt(item);
+              } else if (typeof item === 'object' && item !== null) {
+                return cifrarObjeto(item);
+              }
+              return item;
+            });
+          } else {
+            resultado[key] = cifrarObjeto(valor);
+          }
+        } else {
+          // Otros tipos (number, boolean, null) se mantienen igual
+          resultado[key] = valor;
+        }
+      }
+      return resultado;
+    };
+
+    // 1. Cifrar objeto 'user' campo por campo
+    const userCifrado = cifrarObjeto(user);
+    console.log("✓ Objeto 'user' cifrado");
+
+    // 2. Cifrar objeto 'responses' campo por campo
+    const responsesCifrado = cifrarObjeto(responses);
+    console.log("✓ Objeto 'responses' cifrado");
+
+    // Guardar respuesta con datos CIFRADOS
     const result = await req.db.collection("respuestas").insertOne({
       formId,
-      user,
-      responses,
+      user: userCifrado,  // ← CIFRADO campo por campo
+      responses: responsesCifrado,  // ← CIFRADO campo por campo
       formTitle,
       mail: correoRespaldo,
       status: "pendiente",
-      createdAt: new Date()
+      createdAt: new Date(),
+      updatedAt: new Date()
     });
 
+    console.log(`✅ Respuesta guardada con ID: ${result.insertedId}`);
+
+    // Manejar adjuntos si existen
     if (adjuntos.length > 0) {
       await req.db.collection("adjuntos").insertOne({
         responseId: result.insertedId,
         submittedAt: new Date().toISOString(),
         adjuntos: []
       });
+      console.log(`✅ Documento adjuntos creado`);
     }
 
-    // Enviar correo de respaldo
+    // Enviar correo de respaldo (usamos datos descifrados del user original)
     if (correoRespaldo && correoRespaldo.trim() !== '') {
       await enviarCorreoRespaldo(correoRespaldo, formTitle, user, responses, form.questions);
+      console.log("✓ Correo de respaldo enviado");
     }
 
-    // Notificaciones (RRHH y Admin)
+    // Notificaciones (RRHH y Admin) - usar datos descifrados
     const notifData = {
       titulo: `${usuario} de la empresa ${empresa} ha respondido el formulario ${formTitle}`,
       descripcion: adjuntos.length > 0 ? `Incluye ${adjuntos.length} archivo(s)` : "Revisar en panel.",
@@ -145,8 +199,10 @@ router.post("/", async (req, res) => {
       icono: "Edit",
       actionUrl: `/RespuestasForms?id=${result.insertedId}`,
     };
+
     await addNotification(req.db, { filtro: { cargo: "RRHH" }, ...notifData });
     await addNotification(req.db, { filtro: { cargo: "admin" }, ...notifData });
+    console.log("✓ Notificaciones a RRHH y Admin enviadas");
 
     // Notificación al usuario
     await addNotification(req.db, {
@@ -158,21 +214,37 @@ router.post("/", async (req, res) => {
       color: "#006e13ff",
       actionUrl: `/?id=${result.insertedId}`,
     });
+    console.log("✓ Notificación al usuario enviada");
 
+    // Generar documento anexo (usar datos descifrados)
     try {
       await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form.section, {
         nombre: usuario,
         empresa: empresa,
         uid: userId,
       }, formId, formTitle);
+      console.log("✓ Documento anexo generado");
     } catch (error) {
       console.error("Error generando documento:", error.message);
     }
 
-    res.json({ _id: result.insertedId, formId, user, responses, formTitle, mail: correoRespaldo });
+    // Respuesta al frontend con datos DESCIFRADOS (como espera el frontend)
+    res.json({
+      _id: result.insertedId,
+      formId,
+      user,  // ← Datos descifrados (lo que el frontend espera)
+      responses,  // ← Datos descifrados
+      formTitle,
+      mail: correoRespaldo,
+      message: "Respuesta guardada exitosamente con cifrado PQC"
+    });
 
   } catch (err) {
-    res.status(500).json({ error: "Error al guardar respuesta: " + err.message });
+    console.error("Error al guardar respuesta PQC:", err);
+    res.status(500).json({
+      error: "Error al guardar respuesta: " + err.message,
+      step: "cifrado_pqc"
+    });
   }
 });
 
@@ -191,7 +263,6 @@ router.post("/admin", async (req, res) => {
     if (!tokenValido.ok) return res.status(401).json({ error: tokenValido.reason });
 
     // --- BÚSQUEDA PQC DEL USUARIO DESTINATARIO ---
-    // Buscamos por mail_index porque el mail original está cifrado
     const userDestinatario = await req.db.collection("usuarios").findOne({
       mail_index: createBlindIndex(correoRespaldo),
     });
@@ -200,22 +271,58 @@ router.post("/admin", async (req, res) => {
       return res.status(404).json({ error: `Destinatario no encontrado con el correo: ${correoRespaldo}` });
     }
 
-    // Desciframos los datos para construir el objeto de respuesta correctamente
+    // Desciframos los datos del usuario para construir el objeto
     const destinatarioUserObject = {
       uid: userDestinatario._id.toString(),
-      nombre: decrypt(userDestinatario.nombre),
-      empresa: userDestinatario.empresa, // Si empresa no está cifrada
+      nombre: userDestinatario.nombre.includes(':')
+        ? decrypt(userDestinatario.nombre)
+        : userDestinatario.nombre,
+      empresa: destinatarioEmpresa, // Usamos la empresa del formulario
       mail: correoRespaldo,
     };
 
     const form = await req.db.collection("forms").findOne({ _id: new ObjectId(formId) });
     if (!form) return res.status(404).json({ error: "Formulario no encontrado" });
 
+    // Función para cifrar objetos recursivamente
+    const cifrarObjeto = (obj) => {
+      if (!obj || typeof obj !== 'object') return obj;
+
+      const resultado = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string' && valor.trim() !== '' && !valor.includes(':')) {
+          resultado[key] = encrypt(valor);
+        } else if (typeof valor === 'object' && valor !== null) {
+          if (Array.isArray(valor)) {
+            resultado[key] = valor.map(item => {
+              if (typeof item === 'string' && item.trim() !== '' && !item.includes(':')) {
+                return encrypt(item);
+              } else if (typeof item === 'object' && item !== null) {
+                return cifrarObjeto(item);
+              }
+              return item;
+            });
+          } else {
+            resultado[key] = cifrarObjeto(valor);
+          }
+        } else {
+          resultado[key] = valor;
+        }
+      }
+      return resultado;
+    };
+
+    // CIFRAR DATOS ANTES DE GUARDAR
+    const userCifrado = cifrarObjeto(destinatarioUserObject);
+    const responsesCifrado = cifrarObjeto(responses);
+
     const now = new Date();
     const result = await req.db.collection("respuestas").insertOne({
       formId,
-      user: destinatarioUserObject,
-      responses,
+      user: userCifrado,  // ← CIFRADO
+      responses: responsesCifrado,  // ← CIFRADO
       formTitle,
       mail: correoRespaldo,
       status: "pendiente",
@@ -232,6 +339,7 @@ router.post("/admin", async (req, res) => {
       });
     }
 
+    // Para el correo, usar datos DESCIFRADOS
     if (correoRespaldo) {
       await enviarCorreoRespaldo(correoRespaldo, formTitle, destinatarioUserObject, responses, form.questions);
     }
@@ -254,12 +362,28 @@ router.post("/admin", async (req, res) => {
     });
 
     try {
-      await generarAnexoDesdeRespuesta(responses, result.insertedId.toString(), req.db, form.section, destinatarioUserObject, formId, formTitle);
+      await generarAnexoDesdeRespuesta(
+        responses,  // Datos descifrados para generar documento
+        result.insertedId.toString(),
+        req.db,
+        form.section,
+        destinatarioUserObject,  // Datos descifrados
+        formId,
+        formTitle
+      );
     } catch (error) {
       console.error("Error generando documento:", error.message);
     }
 
-    res.json({ _id: result.insertedId, formId, user: destinatarioUserObject, responses, formTitle, mail: correoRespaldo });
+    // Responder con datos DESCIFRADOS al frontend
+    res.json({
+      _id: result.insertedId,
+      formId,
+      user: destinatarioUserObject,  // Descifrado
+      responses,  // Descifrado
+      formTitle,
+      mail: correoRespaldo
+    });
 
   } catch (err) {
     res.status(500).json({ error: "Error Admin: " + err.message });
@@ -360,6 +484,7 @@ router.post("/:id/adjuntos", async (req, res) => {
   }
 });
 
+// Obtiener y descargar un adjunto específico
 router.get("/:id/adjuntos/:index", async (req, res) => {
   try {
     const { id, index } = req.params;
@@ -415,67 +540,213 @@ router.get("/:id/adjuntos/:index", async (req, res) => {
   }
 });
 
+// Obtener todas las respuestas
 router.get("/", async (req, res) => {
   try {
     const answers = await req.db.collection("respuestas").find().toArray();
-    res.json(answers);
+
+    // Importar decrypt
+    const { decrypt } = require('../utils/seguridad.helper');
+
+    // Descifrar cada respuesta
+    const answersDescifradas = answers.map(answer => {
+      const descifrarCampo = (valor) => {
+        if (typeof valor === 'string' && valor.includes(':')) {
+          return decrypt(valor);
+        }
+        return valor;
+      };
+
+      const descifrarObjeto = (obj) => {
+        if (!obj || typeof obj !== 'object') return obj;
+
+        const resultado = {};
+        for (const key in obj) {
+          const valor = obj[key];
+          resultado[key] = descifrarCampo(valor);
+        }
+        return resultado;
+      };
+
+      const answerDescifrado = { ...answer };
+
+      if (answerDescifrado.user) {
+        answerDescifrado.user = descifrarObjeto(answerDescifrado.user);
+      }
+
+      if (answerDescifrado.responses) {
+        answerDescifrado.responses = descifrarObjeto(answerDescifrado.responses);
+      }
+
+      return answerDescifrado;
+    });
+
+    res.json(answersDescifradas);
   } catch (err) {
     res.status(500).json({ error: "Error al obtener formularios" });
   }
 });
 
+// Obtener respuestas por email
 router.get("/mail/:mail", async (req, res) => {
   try {
     const cleanMail = req.params.mail.toLowerCase().trim();
-    // No buscamos por "user.mail" directo porque ese valor en respuestas 
-    // podría ser plano o cifrado según cuando se guardó, pero el Blind Index 
-    // en la colección de usuarios es nuestra fuente de verdad.
 
-    // Primero validamos si el usuario existe para obtener su UID
-    const user = await req.db.collection("usuarios").findOne({ mail_index: createBlindIndex(cleanMail) });
+    // Buscar usuario por Blind Index (el mail está cifrado en la BD)
+    const user = await req.db.collection("usuarios").findOne({
+      mail_index: createBlindIndex(cleanMail)
+    });
 
-    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
-
-    // Ahora buscamos en respuestas por el UID del usuario (que es inmutable)
-    const answers = await req.db.collection("respuestas").find({ "user.uid": user._id.toString() }).toArray();
-
-    if (!answers || answers.length === 0) {
-      return res.status(404).json({ error: "No se encontraron formularios" });
+    if (!user) {
+      return res.status(404).json({
+        error: "Usuario no encontrado",
+        mailBuscado: cleanMail
+      });
     }
 
-    if (!answers || answers.length === 0) {
-      return res.status(404).json({ error: "No se encontraron formularios para este email" });
+    console.log(`Usuario encontrado: ${user._id}, mail_index: ${user.mail_index}`);
+
+    // Descifrar el nombre del usuario para logging
+    let nombreUsuario = "Usuario";
+    if (user.nombre && user.nombre.includes(':')) {
+      try {
+        nombreUsuario = decrypt(user.nombre);
+        console.log(`Nombre descifrado: ${nombreUsuario}`);
+      } catch (decryptError) {
+        console.error("Error descifrando nombre:", decryptError);
+      }
     }
 
-    // Procesar las respuestas en JavaScript
+    // Buscar respuestas por el UID del usuario (campo no cifrado)
+    const answers = await req.db.collection("respuestas").find({
+      "user.uid": user._id.toString()
+    }).toArray();
+
+    if (!answers || answers.length === 0) {
+      return res.json({
+        message: "No se encontraron formularios para este usuario",
+        usuario: nombreUsuario,
+        total: 0,
+        respuestas: []
+      });
+    }
+
+    console.log(`Encontradas ${answers.length} respuestas para usuario ${user._id}`);
+
+    // Función para descifrar campos recursivamente
+    const descifrarCampo = (valor) => {
+      if (typeof valor === 'string' && valor.includes(':')) {
+        try {
+          return decrypt(valor);
+        } catch (error) {
+          console.error("Error descifrando campo:", error);
+          return "[Error de descifrado]";
+        }
+      }
+      return valor;
+    };
+
+    const descifrarObjeto = (obj) => {
+      if (!obj || typeof obj !== 'object') return obj;
+
+      if (Array.isArray(obj)) {
+        return obj.map(item => descifrarCampo(item));
+      }
+
+      const resultado = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string') {
+          resultado[key] = descifrarCampo(valor);
+        } else if (typeof valor === 'object' && valor !== null) {
+          resultado[key] = descifrarObjeto(valor);
+        } else {
+          resultado[key] = valor;
+        }
+      }
+      return resultado;
+    };
+
+    // Descifrar cada respuesta
     const answersProcessed = answers.map(answer => {
-      let trabajador = "No especificado";
+      const answerDescifrada = { ...answer };
 
-      if (answer.responses) {
-        trabajador = answer.responses["Nombre del trabajador"] ||
-          answer.responses["NOMBRE DEL TRABAJADOR"] ||
-          answer.responses["nombre del trabajador"]
+      // 1. Descifrar el objeto 'user' completo
+      if (answerDescifrada.user) {
+        answerDescifrada.user = descifrarObjeto(answerDescifrada.user);
+      }
+
+      // 2. Descifrar el objeto 'responses' completo
+      if (answerDescifrada.responses) {
+        answerDescifrada.responses = descifrarObjeto(answerDescifrada.responses);
+      }
+
+      // 3. Extraer trabajador de los responses ya descifrados
+      let trabajador = "No especificado";
+      if (answerDescifrada.responses) {
+        // Buscar en varios formatos posibles del campo
+        trabajador = answerDescifrada.responses["Nombre del trabajador"] ||
+          answerDescifrada.responses["NOMBRE DEL TRABAJADOR"] ||
+          answerDescifrada.responses["nombre del trabajador"] ||
+          answerDescifrada.responses["Nombre del Trabajador"] ||
+          answerDescifrada.responses["Nombre trabajador"] ||
+          answerDescifrada.responses["Nombre"] ||
+          answerDescifrada.responses["nombre"] ||
+          "No especificado";
+      }
+
+      // 4. Descifrar otros campos sensibles si existen
+      if (answerDescifrada.mail && answerDescifrada.mail.includes(':')) {
+        answerDescifrada.mail = descifrarCampo(answerDescifrada.mail);
       }
 
       return {
-        _id: answer._id,
-        formId: answer.formId,
-        formTitle: answer.formTitle,
+        _id: answerDescifrada._id,
+        formId: answerDescifrada.formId,
+        formTitle: answerDescifrada.formTitle,
         trabajador: trabajador,
-        user: answer.user,
-        status: answer.status,
-        createdAt: answer.createdAt,
-        approvedAt: answer.approvedAt,
-        updatedAt: answer.updatedAt
+        user: answerDescifrada.user,
+        status: answerDescifrada.status,
+        createdAt: answerDescifrada.createdAt,
+        approvedAt: answerDescifrada.approvedAt,
+        updatedAt: answerDescifrada.updatedAt,
+        signedAt: answerDescifrada.signedAt,
+        finalizedAt: answerDescifrada.finalizedAt,
+        // Mantener otros campos relevantes
+        hasCorrection: answerDescifrada.hasCorrection,
+        correctionFileName: answerDescifrada.correctionFileName,
+        // Datos del formulario para referencia
+        totalFields: answerDescifrada.responses ? Object.keys(answerDescifrada.responses).length : 0
       };
     });
 
-    res.json(answersProcessed);
+    // Ordenar por fecha de creación (más recientes primero)
+    answersProcessed.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.json({
+      success: true,
+      usuario: nombreUsuario,
+      mail: cleanMail,
+      total: answersProcessed.length,
+      respuestas: answersProcessed,
+      metadata: {
+        usuarioId: user._id,
+        buscadoPor: "mail_index",
+        fechaConsulta: new Date().toISOString()
+      }
+    });
+
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener por email" });
+    console.error("Error en GET /mail/:mail:", err);
+    res.status(500).json({
+      error: "Error al obtener formularios por email: " + err.message,
+      step: "busqueda_mail_pqc"
+    });
   }
 });
 
+// Obtener respuestas en formato mini
 router.get("/mini", async (req, res) => {
   try {
     const answers = await req.db.collection("respuestas")
@@ -499,23 +770,27 @@ router.get("/mini", async (req, res) => {
       let trabajador = "No especificado";
 
       if (answer.responses) {
-        trabajador = answer.responses["Nombre del trabajador"] ||
+        trabajador = decrypt(
+          answer.responses["Nombre del trabajador"] ||
           answer.responses["NOMBRE DEL TRABAJADOR"] ||
           answer.responses["nombre del trabajador"] ||
           answer.responses["Nombre del Trabajador"] ||
           answer.responses["Nombre Del trabajador "] ||
-          "No especificado";
+          "No especificado"
+        );
       }
 
       let rutTrabajador = "No especificado";
 
       if (answer.responses) {
-        rutTrabajador = answer.responses["RUT del trabajador"] ||
+        rutTrabajador = decrypt(
+          answer.responses["RUT del trabajador"] ||
           answer.responses["RUT DEL TRABAJADOR"] ||
           answer.responses["rut del trabajador"] ||
           answer.responses["Rut del Trabajador"] ||
           answer.responses["Rut Del trabajador "] ||
-          "No especificado";
+          "No especificado"
+        );
       }
 
       return {
@@ -525,7 +800,10 @@ router.get("/mini", async (req, res) => {
         trabajador: trabajador,
         rutTrabajador: rutTrabajador,
         submittedAt: answer.submittedAt,
-        user: answer.user,
+        user: answer.user ? {
+          nombre: decrypt(answer.user.nombre),
+          empresa: decrypt(answer.user.empresa)
+        } : answer.user,
         status: answer.status,
         createdAt: answer.createdAt,
         adjuntosCount: answer.adjuntosCount || 0
@@ -553,6 +831,156 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+//actualizar respuesta
+router.put("/:id", async (req, res) => {
+  try {
+    const { user, responses, ...rest } = req.body;
+
+    // Preparar objeto de actualización
+    const updateData = {
+      ...rest,
+      updatedAt: new Date().toISOString()
+    };
+
+    // Función para cifrar objetos recursivamente
+    const cifrarObjeto = (obj) => {
+      if (!obj || typeof obj !== 'object') return obj;
+
+      if (Array.isArray(obj)) {
+        return obj.map(item => {
+          if (typeof item === 'string' && item.trim() !== '' && !item.includes(':')) {
+            return encrypt(item);
+          } else if (typeof item === 'object' && item !== null) {
+            return cifrarObjeto(item);
+          }
+          return item;
+        });
+      }
+
+      const resultado = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string' && valor.trim() !== '' && !valor.includes(':')) {
+          // Cifrar strings que no estén ya cifrados
+          resultado[key] = encrypt(valor);
+        } else if (typeof valor === 'object' && valor !== null) {
+          resultado[key] = cifrarObjeto(valor);
+        } else {
+          resultado[key] = valor;
+        }
+      }
+      return resultado;
+    };
+
+    // 1. Si viene 'user' en la actualización, CIFRARLO antes de guardar
+    if (user && typeof user === 'object') {
+      console.log("Cifrando objeto 'user' para actualización...");
+      updateData.user = cifrarObjeto(user);
+    }
+
+    // 2. Si viene 'responses' en la actualización, CIFRARLO antes de guardar
+    if (responses && typeof responses === 'object') {
+      console.log("Cifrando objeto 'responses' para actualización...");
+      updateData.responses = cifrarObjeto(responses);
+    }
+
+    console.log("Datos a actualizar (cifrados):", Object.keys(updateData));
+
+    // Actualizar en la base de datos
+    const result = await req.db.collection("respuestas").findOneAndUpdate(
+      { _id: new ObjectId(req.params.id) },
+      { $set: updateData },
+      { returnDocument: "after" }
+    );
+
+    if (!result.value) {
+      console.log("Respuesta no encontrada para ID:", req.params.id);
+      return res.status(404).json({ error: "Formulario no encontrado" });
+    }
+
+    console.log("✅ Respuesta actualizada exitosamente");
+
+    // Función para descifrar para la respuesta al frontend
+    const descifrarObjeto = (obj) => {
+      if (!obj || typeof obj !== 'object') return obj;
+
+      if (Array.isArray(obj)) {
+        return obj.map(item => {
+          if (typeof item === 'string' && item.includes(':')) {
+            try {
+              return decrypt(item);
+            } catch (error) {
+              console.error("Error descifrando array item:", error);
+              return item;
+            }
+          } else if (typeof item === 'object' && item !== null) {
+            return descifrarObjeto(item);
+          }
+          return item;
+        });
+      }
+
+      const resultado = {};
+      for (const key in obj) {
+        const valor = obj[key];
+
+        if (typeof valor === 'string' && valor.includes(':')) {
+          try {
+            resultado[key] = decrypt(valor);
+          } catch (error) {
+            console.error(`Error descifrando campo ${key}:`, error);
+            resultado[key] = valor; // Mantener cifrado si hay error
+          }
+        } else if (typeof valor === 'object' && valor !== null) {
+          resultado[key] = descifrarObjeto(valor);
+        } else {
+          resultado[key] = valor;
+        }
+      }
+      return resultado;
+    };
+
+    // Preparar respuesta DESCIFRADA para el frontend
+    const respuestaActualizada = { ...result.value };
+
+    // Descifrar user si está cifrado
+    if (respuestaActualizada.user && typeof respuestaActualizada.user === 'object') {
+      respuestaActualizada.user = descifrarObjeto(respuestaActualizada.user);
+    }
+
+    // Descifrar responses si están cifrados
+    if (respuestaActualizada.responses && typeof respuestaActualizada.responses === 'object') {
+      respuestaActualizada.responses = descifrarObjeto(respuestaActualizada.responses);
+    }
+
+    // Descifrar otros campos cifrados si existen
+    if (respuestaActualizada.mail && respuestaActualizada.mail.includes(':')) {
+      respuestaActualizada.mail = decrypt(respuestaActualizada.mail);
+    }
+
+    res.json({
+      success: true,
+      message: "Respuesta actualizada exitosamente",
+      data: respuestaActualizada,
+      metadata: {
+        actualizadoEl: new Date().toISOString(),
+        camposActualizados: Object.keys(updateData).filter(k => k !== 'updatedAt'),
+        userActualizado: !!user,
+        responsesActualizado: !!responses
+      }
+    });
+
+  } catch (err) {
+    console.error("Error actualizando respuesta PQC:", err);
+    res.status(500).json({
+      error: "Error al actualizar formulario: " + err.message,
+      step: "actualizacion_pqc"
+    });
+  }
+});
+
+// Obtener respuestas por sección
 router.get("/section/:section", async (req, res) => {
   try {
     const forms = await req.db
@@ -681,6 +1109,7 @@ router.get("/:formId/chat/admin", async (req, res) => {
   }
 });
 
+//solicitar de mensajes generales
 router.get("/:formId/chat/", async (req, res) => {
   try {
     const { formId } = req.params;
@@ -890,6 +1319,7 @@ router.post("/chat", async (req, res) => {
   }
 });
 
+// Marcar todos los mensajes como leídos
 router.put("/chat/marcar-leidos", async (req, res) => {
   try {
     const result = await req.db.collection("respuestas").updateMany(
@@ -1134,9 +1564,7 @@ router.get("/:id/archived", async (req, res) => {
   }
 });
 
-// ============ NUEVOS ENDPOINTS PARA MÚLTIPLES ARCHIVOS ============
-
-
+// Subir múltiples archivos corregidos
 router.post("/upload-corrected-files", async (req, res) => {
   try {
     console.log("=== DEBUG BACKEND - HEADERS ===");
@@ -1369,7 +1797,7 @@ router.post("/upload-corrected-files", async (req, res) => {
   }
 });
 
-// 2. OBTENER TODOS LOS ARCHIVOS CORREGIDOS DE UNA RESPUESTA
+// OBTENER TODOS LOS ARCHIVOS CORREGIDOS DE UNA RESPUESTA
 router.get("/corrected-files/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1418,7 +1846,7 @@ router.get("/corrected-files/:responseId", async (req, res) => {
   }
 });
 
-// 3. DESCARGAR ARCHIVO CORREGIDO ESPECÍFICO
+// DESCARGAR ARCHIVO CORREGIDO ESPECÍFICO
 router.get("/download-corrected-file/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1463,7 +1891,7 @@ router.get("/download-corrected-file/:responseId", async (req, res) => {
   }
 });
 
-// 4. ELIMINAR ARCHIVO CORREGIDO ESPECÍFICO
+// ELIMINAR ARCHIVO CORREGIDO ESPECÍFICO
 router.delete("/delete-corrected-file/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1604,7 +2032,7 @@ router.delete("/delete-corrected-file/:responseId", async (req, res) => {
   }
 });
 
-// 5. APROBAR FORMULARIO CON MÚLTIPLES ARCHIVOS (MODIFICADO)
+// APROBAR FORMULARIO CON MÚLTIPLES ARCHIVOS (MODIFICADO)
 router.post("/:id/approve", async (req, res) => {
   try {
     const responseId = req.params.id;
@@ -1697,7 +2125,7 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
-// 6. OBTENER DATOS DE ARCHIVOS APROBADOS (MODIFICADO)
+// OBTENER DATOS DE ARCHIVOS APROBADOS (MODIFICADO)
 router.get("/data-approved/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1745,7 +2173,7 @@ router.get("/data-approved/:responseId", async (req, res) => {
   }
 });
 
-// 7. DESCARGAR PDF APROBADO - CORREGIDO
+// DESCARGAR PDF APROBADO - CORREGIDO
 router.get("/download-approved-pdf/:responseId", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1809,7 +2237,7 @@ router.get("/download-approved-pdf/:responseId", async (req, res) => {
   }
 });
 
-// 8. ELIMINAR CORRECCIÓN (MODIFICADO)
+// ELIMINAR CORRECCIÓN (MODIFICADO)
 router.delete("/:id/remove-correction", async (req, res) => {
   try {
     const responseId = req.params.id;
@@ -1880,7 +2308,7 @@ router.delete("/:id/remove-correction", async (req, res) => {
   }
 });
 
-// 9. Subir PDF firmado por cliente a colección firmados y cambiar estado de respuesta a 'firmado'
+// Subir PDF firmado por cliente a colección firmados y cambiar estado de respuesta a 'firmado'
 router.post("/:responseId/upload-client-signature", upload.single('signedPdf'), async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -1962,7 +2390,7 @@ router.post("/:responseId/upload-client-signature", upload.single('signedPdf'), 
   }
 });
 
-// 10. Obtener PDF firmado por cliente SIN cambiar estado - CORREGIDO
+// Obtener PDF firmado por cliente SIN cambiar estado - CORREGIDO
 router.get("/:responseId/client-signature", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -2024,7 +2452,7 @@ router.get("/:responseId/client-signature", async (req, res) => {
   }
 });
 
-// 11. Eliminar PDF firmado por cliente y volver al estado 'aprobado'
+// Eliminar PDF firmado por cliente y volver al estado 'aprobado'
 router.delete("/:responseId/client-signature", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -2058,7 +2486,7 @@ router.delete("/:responseId/client-signature", async (req, res) => {
   }
 });
 
-// 12. Verificar si existe PDF firmado para una respuesta específica
+// Verificar si existe PDF firmado para una respuesta específica
 router.get("/:responseId/has-client-signature", async (req, res) => {
   try {
     const { responseId } = req.params;
@@ -2094,7 +2522,7 @@ router.get("/:responseId/has-client-signature", async (req, res) => {
   }
 });
 
-// 13. Endpoint para regenerar documento desde respuestas existentes
+// Endpoint para regenerar documento desde respuestas existentes
 router.post("/:id/regenerate-document", async (req, res) => {
   try {
     const { id } = req.params;
@@ -2190,7 +2618,7 @@ router.post("/:id/regenerate-document", async (req, res) => {
   }
 });
 
-// 14. Cambiar estado de respuesta (avanzar o retroceder)
+// Cambiar estado de respuesta (avanzar o retroceder)
 router.put("/:id/status", async (req, res) => {
   try {
     const { id } = req.params;
@@ -2275,6 +2703,7 @@ router.put("/:id/status", async (req, res) => {
   }
 });
 
+// MANTENIMIENTO: Migrar respuestas existentes para cifrado PQC
 router.get("/mantenimiento/migrar-respuestas-pqc", async (req, res) => {
   try {
     // Importar helpers de seguridad
